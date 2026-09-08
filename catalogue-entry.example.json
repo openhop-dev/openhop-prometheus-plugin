@@ -1,0 +1,7 @@
+{
+  "id": "openhop.prometheus",
+  "name": "Prometheus",
+  "description": "Prometheus metrics exporter for openHop Repeater /api/stats.",
+  "repository": "YOUR-GITHUB-OWNER/openhop-prometheus-plugin",
+  "category": "Monitoring"
+}

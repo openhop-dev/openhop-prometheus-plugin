@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=70", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openhop-prometheus-plugin"
+version = "0.2.0"
+description = "Prometheus runtime plugin for openHop Repeater"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [{name = "openHop Prometheus Plugin contributors"}]
+dependencies = [
+  "prometheus-client>=0.20,<1",
+  "requests>=2.31,<3",
+  "psutil>=5.9,<8"
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8,<9",
+  "ruff>=0.6"
+]
+
+[project.scripts]
+openhop-prometheus = "openhop_prometheus_plugin.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.data-files]
+"share/openhop/plugins/openhop.prometheus" = [
+  "openhop-plugin.json",
+  "config.default.json"
+]
+"share/openhop/plugins/openhop.prometheus/ui" = [
+  "ui/index.html",
+  "ui/app.js",
+  "ui/styles.css"
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

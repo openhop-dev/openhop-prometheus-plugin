@@ -1,0 +1,17 @@
+{
+  "bind_host": "127.0.0.1",
+  "port": 9109,
+  "metrics_path": "/metrics",
+  "collection_interval_seconds": 30,
+  "collection_timeout_seconds": 10,
+  "repeater_enabled": true,
+  "repeater_scheme": "http",
+  "repeater_host": "127.0.0.1",
+  "repeater_port": 8000,
+  "repeater_stats_path": "/api/stats",
+  "repeater_api_token": "",
+  "repeater_verify_tls": true,
+  "test_endpoint_request_id": "",
+  "test_repeater_request_id": "",
+  "refresh_request_id": ""
+}

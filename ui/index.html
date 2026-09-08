@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>openHop Prometheus</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+        <div><div class="eyebrow">openHop plugin</div><h1>Prometheus</h1></div>
+        <span class="version">v0.2.0</span>
+      </div>
+      <div class="top-actions">
+        <span id="global-status" class="status-pill neutral"><span class="status-dot"></span>Starting</span>
+        <button id="refresh-now" class="button ghost" type="button">Refresh metrics</button>
+      </div>
+    </header>
+
+    <nav class="tabs" aria-label="Prometheus plugin sections">
+      <button class="tab active" data-tab="overview" type="button">Overview</button>
+      <button class="tab" data-tab="metrics" type="button">Metrics <span id="tab-metric-count" class="tab-count">0</span></button>
+      <button class="tab" data-tab="collectors" type="button">Collectors</button>
+      <button class="tab" data-tab="prometheus" type="button">Prometheus</button>
+      <button class="tab" data-tab="settings" type="button">Settings</button>
+    </nav>
+
+    <main>
+      <div id="notice" class="notice" role="status" aria-live="polite"></div>
+
+      <section id="tab-overview" class="tab-panel active">
+        <div class="hero card">
+          <div>
+            <div class="eyebrow">Exporter status</div>
+            <div class="hero-title-row"><h2 id="overview-title">Waiting for runtime data</h2><span id="overview-health" class="health-badge neutral">Starting</span></div>
+            <p id="overview-summary" class="muted">The dashboard will populate after the first Repeater /api/stats collection.</p>
+            <div class="endpoint-line"><code id="overview-endpoint">http://127.0.0.1:9109/metrics</code><button class="icon-button copy" data-copy-target="overview-endpoint" type="button">Copy</button></div>
+          </div>
+          <div class="countdown-block"><span>Next collection</span><strong id="next-collection">—</strong><small id="last-collection">Last collection —</small></div>
+        </div>
+
+        <div class="kpi-grid">
+          <article class="kpi card"><span>Metric samples</span><strong id="kpi-metrics">0</strong><small id="kpi-families">0 metric families</small></article>
+          <article class="kpi card"><span>Collectors</span><strong id="kpi-collectors">0/0</strong><small>healthy</small></article>
+          <article class="kpi card"><span>Collection time</span><strong id="kpi-duration">—</strong><small>last cycle</small></article>
+          <article class="kpi card"><span>Scrapes served</span><strong id="kpi-scrapes">0</strong><small id="kpi-scrape-errors">0 errors</small></article>
+        </div>
+
+        <div class="overview-grid">
+          <section class="card section-card">
+            <div class="section-heading"><div><span class="eyebrow">Collection pipeline</span><h3>Source health</h3></div><button class="link-button" data-tab-jump="collectors" type="button">View all</button></div>
+            <div id="overview-collectors" class="collector-list empty-state">No collector data yet.</div>
+          </section>
+          <section class="card section-card">
+            <div class="section-heading"><div><span class="eyebrow">Repeater snapshot</span><h3>RF & traffic</h3></div><button class="link-button" data-tab-jump="metrics" type="button">Browse metrics</button></div>
+            <div id="rf-highlights" class="metric-highlights empty-state">No Repeater metrics yet.</div>
+          </section>
+        </div>
+
+        <section class="card section-card">
+          <div class="section-heading"><div><span class="eyebrow">Security & reachability</span><h3>Prometheus target</h3></div><button class="button compact secondary" id="overview-test-endpoint" type="button">Test endpoint</button></div>
+          <div id="bind-guidance" class="guidance"></div>
+        </section>
+      </section>
+
+      <section id="tab-metrics" class="tab-panel">
+        <div class="page-heading"><div><span class="eyebrow">Cached exposition</span><h2>Metrics</h2><p class="muted">Values are collected from the Repeater <code>/api/stats</code> endpoint and cached for Prometheus scrapes.</p></div><button id="metrics-refresh" class="button secondary" type="button">Refresh metrics</button></div>
+        <div class="card table-card">
+          <div class="table-toolbar">
+            <label class="search-field"><span>Search</span><input id="metric-search" type="search" placeholder="airtime, packets, RSSI, memory…"></label>
+            <label><span>Collector</span><select id="metric-collector"><option value="">All collectors</option></select></label>
+            <label><span>Type</span><select id="metric-type"><option value="">All types</option><option value="gauge">Gauge</option><option value="counter">Counter</option><option value="info">Info</option></select></label>
+          </div>
+          <div class="table-scroll"><table><thead><tr><th>Metric</th><th>Type</th><th>Value</th><th>Labels</th><th>Collector</th></tr></thead><tbody id="metrics-body"></tbody></table></div>
+          <div id="metrics-empty" class="empty-state hidden">No metrics match the current filters.</div>
+        </div>
+      </section>
+
+      <section id="tab-collectors" class="tab-panel">
+        <div class="page-heading"><div><span class="eyebrow">Collection pipeline</span><h2>Collectors</h2><p class="muted">The plugin runtime and Repeater API are independent health domains. Cached values remain available after a transient Repeater failure.</p></div></div>
+        <div id="collector-cards" class="collector-grid"></div>
+        <section class="card section-card actions-results"><div class="section-heading"><div><span class="eyebrow">Connection checks</span><h3>Latest test results</h3></div></div><div id="test-results" class="test-results empty-state">No connection tests have been run yet.</div></section>
+      </section>
+
+      <section id="tab-prometheus" class="tab-panel">
+        <div class="page-heading"><div><span class="eyebrow">Scrape configuration</span><h2>Prometheus</h2><p class="muted">Use this plugin as a normal Prometheus target. The scrape endpoint intentionally has no application-level authentication.</p></div><button id="prom-test-endpoint" class="button secondary" type="button">Test endpoint</button></div>
+        <div class="prom-grid">
+          <section class="card section-card">
+            <span class="eyebrow">Exporter endpoint</span><h3>URLs</h3>
+            <div class="endpoint-box"><span>Metrics</span><code id="prom-metrics-url"></code><button class="copy icon-button" data-copy-target="prom-metrics-url" type="button">Copy</button></div>
+            <div class="endpoint-box"><span>Health</span><code id="prom-health-url"></code><button class="copy icon-button" data-copy-target="prom-health-url" type="button">Copy</button></div>
+            <div id="prom-bind-warning" class="warning-box"></div>
+          </section>
+          <section class="card section-card"><div class="section-heading"><div><span class="eyebrow">prometheus.yml</span><h3>Scrape target</h3></div><button class="copy icon-button" data-copy-target="prom-config" type="button">Copy</button></div><pre id="prom-config" class="code-block"></pre></section>
+        </div>
+        <section class="card section-card"><div class="section-heading"><div><span class="eyebrow">Operational check</span><h3>Endpoint test</h3></div></div><div id="endpoint-test-result" class="test-result neutral">No endpoint test has been run yet.</div></section>
+      </section>
+
+      <section id="tab-settings" class="tab-panel">
+        <form id="settings-form">
+          <div class="page-heading"><div><span class="eyebrow">Plugin configuration</span><h2>Settings</h2><p class="muted">The exporter now uses the Repeater <code>/api/stats</code> endpoint as its sole telemetry source.</p></div><div class="settings-actions"><button id="reload-settings" class="button ghost" type="button">Reload</button><button class="button primary" type="submit">Save & restart</button></div></div>
+
+          <section class="card settings-section">
+            <div class="settings-section-heading"><div><h3>Prometheus endpoint</h3><p>Where Prometheus connects to this exporter.</p></div><span class="section-number">01</span></div>
+            <div class="form-grid three">
+              <label>Bind address<input id="bind_host" type="text" autocomplete="off" placeholder="127.0.0.1"><small>Loopback is safest. Use a LAN/VPN address only when a remote Prometheus server must connect.</small></label>
+              <label>Port<input id="port" type="number" min="1024" max="65535"></label>
+              <label>Metrics path<input id="metrics_path" type="text" placeholder="/metrics"></label>
+              <label>Collection interval<input id="collection_interval_seconds" type="number" min="5" max="3600"><small>Seconds between background collections.</small></label>
+              <label>Collection timeout<input id="collection_timeout_seconds" type="number" min="0.5" max="60" step="0.5"><small>Repeater API timeout in seconds.</small></label>
+            </div>
+            <div id="settings-bind-warning" class="warning-box hidden"></div>
+          </section>
+
+          <section class="card settings-section">
+            <div class="settings-section-heading"><div><h3>openHop Repeater /api/stats</h3><p>This single endpoint supplies packet counters, RF data, airtime, neighbours, GPS health and system-health sensor readings.</p></div><span class="section-number">02</span></div>
+            <label class="switch-row"><input id="repeater_enabled" type="checkbox"><span class="switch"></span><span><strong>Enable Repeater collector</strong><small>Poll the configured <code>/api/stats</code> JSON endpoint.</small></span></label>
+            <div class="form-grid three nested">
+              <label>Scheme<select id="repeater_scheme"><option value="http">http</option><option value="https">https</option></select></label>
+              <label>Host<input id="repeater_host" type="text" placeholder="127.0.0.1"></label>
+              <label>Port<input id="repeater_port" type="number" min="1" max="65535"></label>
+              <label>Stats path<input id="repeater_stats_path" type="text" placeholder="/api/stats"></label>
+              <label class="span-two">API token<input id="repeater_api_token" type="password" autocomplete="new-password" spellcheck="false" placeholder="Optional if read-only API access is permitted"><small>Sent only to the Repeater API as a Bearer token. It is never exported as a metric or dashboard value.</small></label>
+              <label class="switch-inline"><input id="repeater_verify_tls" type="checkbox"><span>Verify HTTPS certificates</span></label>
+            </div>
+            <button id="test-repeater" class="button secondary compact" type="button">Test Repeater connection</button>
+          </section>
+        </form>
+      </section>
+    </main>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

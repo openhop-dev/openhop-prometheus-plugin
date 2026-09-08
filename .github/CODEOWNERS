@@ -1,0 +1,5 @@
+# Default ownership for all files in this repository.
+* @openhop-dev
+
+# Keep workflow changes under explicit owner review.
+.github/workflows/* @openhop-dev
