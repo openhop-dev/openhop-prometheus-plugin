@@ -197,6 +197,22 @@ dist/openhop_prometheus_plugin-0.2.0-py3-none-any.whl
 
 The openHop plugin manager installs the wheel release asset.
 
+## UI development
+
+The embedded UI follows the openHop NOMAD plugin light/dark palette. The official
+Prometheus logo is bundled offline under `ui/assets/`, with pinned provenance
+and its upstream license. All five dashboard tabs and settings remain available.
+
+Run browser regressions explicitly (otherwise they skip without Playwright):
+
+```bash
+.venv/bin/pip install -e '.[dev,browser]'
+.venv/bin/playwright install chromium
+.venv/bin/pytest -q
+```
+
+Browser tests use an in-memory settings API, not a live Repeater.
+
 ## CLI diagnostics
 
 ```bash
