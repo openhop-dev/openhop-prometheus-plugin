@@ -50,10 +50,12 @@ jobs:
           pytest -q -rs
           node --check ui/app.js
 
-      - name: Build wheel
+      - name: Build wheel and zip bundle
         run: |
           python -m build --wheel
           test "$(find dist -maxdepth 1 -name '*.whl' | wc -l)" -eq 1
+          VERSION=$(python -c "import tomllib; print(tomllib.loads(open('pyproject.toml').read())['project']['version'])")
+          python -c "import zipfile; z=zipfile.ZipFile(f'dist/openhop-prometheus-plugin-v{VERSION}-wheel.zip','w',zipfile.ZIP_DEFLATED); z.write(f'dist/openhop_prometheus_plugin-{VERSION}-py3-none-any.whl',f'openhop_prometheus_plugin-{VERSION}-py3-none-any.whl'); z.close()"
 
       - name: Verify openHop wheel resources
         run: |
@@ -88,5 +90,7 @@ jobs:
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.whl
+          files: |
+            dist/*.whl
+            dist/*-wheel.zip
           generate_release_notes: true
