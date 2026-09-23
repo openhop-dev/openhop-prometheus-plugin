@@ -60,7 +60,7 @@ jobs:
       - name: Verify openHop wheel resources
         run: |
           python - <<'PY'
-          import glob, json, zipfile
+          import glob, json, pathlib, zipfile
           from email.parser import Parser
           wheel = glob.glob('dist/*.whl')
           assert len(wheel) == 1, wheel
@@ -84,6 +84,10 @@ jobs:
               metadata_path = next(n for n in names if n.endswith('.dist-info/METADATA'))
               metadata = Parser().parsestr(z.read(metadata_path).decode())
               assert metadata['Version'] == manifest['version']
+          bundle = pathlib.Path(f"dist/openhop-prometheus-plugin-v{manifest['version']}-wheel.zip")
+          with zipfile.ZipFile(bundle) as z:
+              assert z.namelist() == [pathlib.Path(wheel[0]).name]
+              assert z.read(pathlib.Path(wheel[0]).name) == pathlib.Path(wheel[0]).read_bytes()
           print('verified', wheel[0])
           PY
 

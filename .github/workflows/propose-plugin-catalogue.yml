@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: Existing public final release (vMAJOR.MINOR.PATCH); run on dev
+        description: Existing public final release (vMAJOR.MINOR.PATCH); run on main
         required: true
         type: string
 
@@ -23,7 +23,7 @@ jobs:
   propose:
     if: >-
       github.repository == 'openhop-dev/openhop-prometheus-plugin' &&
-      ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/dev') ||
+      ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
        (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' &&
         github.event.workflow_run.head_repository.full_name == github.repository &&
         github.event.workflow_run.event == 'push'))
@@ -33,7 +33,7 @@ jobs:
       - name: Checkout trusted default branch automation
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: dev
+          ref: main
           persist-credentials: false
       - name: Checkout current catalogue main
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

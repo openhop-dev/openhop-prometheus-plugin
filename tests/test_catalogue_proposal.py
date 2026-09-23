@@ -83,13 +83,19 @@ def test_duplicate_and_invalid_fields_rejected():
 
 
 def test_release_and_origin_require_tag_bound_success():
-    assert release.asset_names('v1.0.0') == ('openhop_prometheus_plugin-1.0.0-py3-none-any.whl',)
+    assert release.asset_names('v1.0.0') == (
+        'openhop_prometheus_plugin-1.0.0-py3-none-any.whl',
+        'openhop-prometheus-plugin-v1.0.0-wheel.zip',
+    )
     assert release.release_state({'tag_name': 'v1.0.0', 'draft': False,
-             'prerelease': False, 'assets': [{'name': release.asset_names('v1.0.0')[0]}]},
+             'prerelease': False, 'assets': [{'name': name} for name in release.asset_names('v1.0.0')]},
              'v1.0.0') == 'verify'
     with pytest.raises(ValueError, match='partial'):
         release.release_state({'tag_name': 'v1.0.0', 'draft': False,
              'prerelease': False, 'assets': []}, 'v1.0.0')
+    with pytest.raises(ValueError, match='partial'):
+        release.release_state({'tag_name': 'v1.0.0', 'draft': False,
+             'prerelease': False, 'assets': [{'name': release.asset_names('v1.0.0')[0]}]}, 'v1.0.0')
     run = {'head_branch': 'v1.0.0', 'head_sha': SHA, 'event': 'push',
            'status': 'completed', 'conclusion': 'success',
            'path': '.github/workflows/release.yml', 'name': 'Release plugin wheel',
@@ -99,8 +105,9 @@ def test_release_and_origin_require_tag_bound_success():
     for modification in ({'head_branch': 'dev'}, {'conclusion': 'failure'},
                          {'head_sha': 'b' * 40}, {'path': '.github/workflows/ci.yml'}):
         assert not release.valid_origin(dict(run, **modification), 'v1.0.0', SHA)
-    with pytest.raises(ValueError, match='dev'):
-        release.event_tag(None, {}, 'workflow_dispatch', 'refs/heads/main', 'v1.0.0')
+    assert release.event_tag(None, {}, 'workflow_dispatch', 'refs/heads/main', 'v1.0.0') == 'v1.0.0'
+    with pytest.raises(ValueError, match='main'):
+        release.event_tag(None, {}, 'workflow_dispatch', 'refs/heads/dev', 'v1.0.0')
 
 
 def test_public_bytes_only_and_missing_registration_fail_closed(monkeypatch):

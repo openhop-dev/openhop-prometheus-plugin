@@ -27,7 +27,7 @@ except ModuleNotFoundError:  # Python 3.10 test/development environments
 REPOSITORY = "openhop-dev/openhop-prometheus-plugin"
 CATALOGUE = "openhop-dev/openhop-plugin-catalogue"
 PLUGIN = "openhop.prometheus"
-TRUSTED_BRANCH = "dev"
+TRUSTED_BRANCH = "main"
 FIELDS = {"version", "source_revision", "wheel_url", "sha256"}
 SHA = re.compile(r"[0-9a-f]{40}")
 TAG = re.compile(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
@@ -53,7 +53,8 @@ def check_versions(tag, root):
 
 
 def asset_names(tag):
-    return (f"openhop_prometheus_plugin-{version(tag)}-py3-none-any.whl",)
+    return (f"openhop_prometheus_plugin-{version(tag)}-py3-none-any.whl",
+            f"openhop-prometheus-plugin-{tag}-wheel.zip")
 
 
 def release_state(release, tag):
@@ -184,7 +185,7 @@ def load_policy(root):
             and c["publisher_user_id"] == 325431437
             and c["branch_prefix"] == "automation/openhop-prometheus-v"
             and c["source_verification"] == "public-tag"
-            and c["release_assets"] == "wheel-only", "Prometheus registration mismatch")
+            and c["release_assets"] == "wheel-and-zip", "Prometheus registration mismatch")
     return policy
 
 
@@ -193,7 +194,7 @@ def trusted_source(api, policy, tag):
     sha = policy.resolve_tag(api, REPOSITORY, tag, PLUGIN)
     compare = api.call(f"/repos/{REPOSITORY}/compare/{sha}...{TRUSTED_BRANCH}")
     require(compare["status"] in {"ahead", "identical"}
-            and compare["merge_base_commit"]["sha"] == sha, "release source is not on trusted dev")
+            and compare["merge_base_commit"]["sha"] == sha, "release source is not on trusted main")
     def source(path):
         blob = api.call(f"/repos/{REPOSITORY}/contents/{path}?ref={sha}")
         require(blob["type"] == "file" and blob["encoding"] == "base64", "source must be regular file")
@@ -219,7 +220,7 @@ def origin(api, tag, sha):
 
 def event_tag(api, event, event_name, ref, manual_tag):
     if event_name == "workflow_dispatch":
-        require(ref == "refs/heads/dev", "manual proposal must run on dev")
+        require(ref == "refs/heads/main", "manual proposal must run on main")
         version(manual_tag)
         return manual_tag
     require(event_name == "workflow_run", "unsupported proposal event")
