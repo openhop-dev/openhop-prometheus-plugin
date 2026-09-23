@@ -26,7 +26,6 @@ except ModuleNotFoundError:  # Python 3.10 test/development environments
 
 REPOSITORY = "openhop-dev/openhop-prometheus-plugin"
 CATALOGUE = "openhop-dev/openhop-plugin-catalogue"
-CATALOGUE_FORK = "yellowcooln/openhop-plugin-catalogue"
 PLUGIN = "openhop.prometheus"
 TRUSTED_BRANCH = "dev"
 FIELDS = {"version", "source_revision", "wheel_url", "sha256"}
@@ -184,7 +183,6 @@ def load_policy(root):
             and c["publisher_login"] == "openhop-catalogue-publisher[bot]"
             and c["publisher_user_id"] == 325431437
             and c["branch_prefix"] == "automation/openhop-prometheus-v"
-            and c["proposal_repository"] == CATALOGUE_FORK
             and c["source_verification"] == "public-tag"
             and c["release_assets"] == "wheel-only", "Prometheus registration mismatch")
     return policy
@@ -271,7 +269,7 @@ def prepare(api, catalogue, tag, output, run_origin=True):
     fields = public_release(api, policy, tag, sha, template)
     candidate = upsert(base, fields)
     branch = "automation/openhop-prometheus-" + tag
-    remote = optional(api.call, f"/repos/{CATALOGUE_FORK}/git/ref/heads/{branch}")
+    remote = optional(api.call, f"/repos/{CATALOGUE}/git/ref/heads/{branch}")
     remote_sha = remote["object"]["sha"] if remote else ""
     require(not remote_sha or SHA.fullmatch(remote_sha), "invalid observed branch SHA")
     changed = candidate != base

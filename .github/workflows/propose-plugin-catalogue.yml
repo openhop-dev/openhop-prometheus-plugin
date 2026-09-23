@@ -65,34 +65,22 @@ jobs:
           (cd plugin-catalogue && ../.automation-venv/bin/python scripts/validate_catalogue.py && ../.automation-venv/bin/python -m pytest tests)
           git -C plugin-catalogue restore catalogue.json
       # No catalogue write token exists while destination repository code runs.
-      - name: Mint fork-only catalogue publisher token
+      - name: Mint catalogue-only publisher token
         if: steps.prepare.outputs.changed == 'true'
-        id: fork-token
-        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
-        with:
-          app-id: ${{ secrets.OPENHOP_CATALOGUE_APP_ID }}
-          private-key: ${{ secrets.OPENHOP_CATALOGUE_APP_PRIVATE_KEY }}
-          owner: yellowcooln
-          repositories: openhop-plugin-catalogue
-          permission-contents: write
-          permission-metadata: read
-          skip-token-revoke: false
-      - name: Mint upstream PR-only publisher token
-        if: steps.prepare.outputs.changed == 'true'
-        id: pr-token
+        id: catalogue-token
         uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
         with:
           app-id: ${{ secrets.OPENHOP_CATALOGUE_APP_ID }}
           private-key: ${{ secrets.OPENHOP_CATALOGUE_APP_PRIVATE_KEY }}
           owner: openhop-dev
           repositories: openhop-plugin-catalogue
+          permission-contents: write
           permission-pull-requests: write
           permission-metadata: read
           skip-token-revoke: false
-      - name: Publish leased proposal on fork and open upstream PR
+      - name: Publish leased proposal branch and PR
         if: steps.prepare.outputs.changed == 'true'
         env:
-          FORK_TOKEN: ${{ steps.fork-token.outputs.token }}
-          UPSTREAM_PR_TOKEN: ${{ steps.pr-token.outputs.token }}
-          APP_SLUG: ${{ steps.fork-token.outputs.app-slug }}
+          GH_TOKEN: ${{ steps.catalogue-token.outputs.token }}
+          APP_SLUG: ${{ steps.catalogue-token.outputs.app-slug }}
         run: python3 -I scripts/publish_catalogue.py --catalogue plugin-catalogue --proposal proposal

@@ -140,7 +140,7 @@ def test_publisher_initial_is_draft_and_retry_preserves_review_state():
     requests = []
     state = {'number': 7, 'head': {'sha': 'c' * 40, 'ref': receipt['branch'],
              'repo': {'full_name': publisher.REPO}},
-             'base': {'ref': 'main', 'repo': {'full_name': publisher.UPSTREAM}},
+             'base': {'ref': 'main', 'repo': {'full_name': publisher.REPO}},
              'state': 'open', 'draft': True}
 
     def api(path, method='GET', data=None):
@@ -156,8 +156,8 @@ def test_publisher_initial_is_draft_and_retry_preserves_review_state():
 
     publisher.publish(api, lambda r: 'c' * 40, receipt)
     posted = next((path, data) for path, method, data in requests if method == 'POST')
-    assert posted[0] == publisher.UPSTREAM_BASE + '/pulls'
-    assert posted[1]['head'] == 'yellowcooln:' + receipt['branch']
+    assert posted[0] == publisher.BASE + '/pulls'
+    assert posted[1]['head'] == receipt['branch']
     assert posted[1]['draft'] is True
     assert not any(method == 'PUT' for _, method, _ in requests)
     requests.clear()
@@ -180,13 +180,13 @@ def test_publisher_initial_is_draft_and_retry_preserves_review_state():
     with pytest.raises(ValueError, match='invalid branch'):
         publisher.push_args('automation/other-v1.0.0', '')
     assert publisher.REPO in publisher.push_args(receipt['branch'], '')[2]
-    assert publisher.UPSTREAM not in publisher.push_args(receipt['branch'], '')[2]
+    assert 'yellowcooln/' not in publisher.push_args(receipt['branch'], '')[2]
 
 def test_publisher_rejects_wrong_head_repository():
     receipt = {'changed': True, 'initial': True, 'branch': 'automation/openhop-prometheus-v1.0.0',
                'base_sha': SHA, 'remote_sha': '', 'fields': fields(), 'origin_run_url': 'https://example.test'}
-    bad = {'number': 7, 'head': {'ref': receipt['branch'], 'repo': {'full_name': publisher.UPSTREAM}},
-           'base': {'ref': 'main', 'repo': {'full_name': publisher.UPSTREAM}}, 'state': 'open'}
+    bad = {'number': 7, 'head': {'ref': receipt['branch'], 'repo': {'full_name': 'yellowcooln/openhop-plugin-catalogue'}},
+           'base': {'ref': 'main', 'repo': {'full_name': publisher.REPO}}, 'state': 'open'}
     def api(path, method='GET', data=None):
         if path.endswith('/git/ref/heads/main'):
             return {'object': {'sha': SHA}}
