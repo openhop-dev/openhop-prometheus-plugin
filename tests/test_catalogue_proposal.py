@@ -116,7 +116,7 @@ def test_recovery_origin_must_bind_tag_source_and_main_run():
     manual = {'id': 34, 'head_branch': 'main', 'head_sha': main_sha,
               'event': 'workflow_dispatch', 'display_title': 'Release plugin wheel v1.0.0',
               'status': 'completed', 'conclusion': 'success',
-              'path': '.github/workflows/release.yml', 'name': 'Release plugin wheel',
+              'path': '.github/workflows/release.yml', 'name': 'Release plugin wheel v1.0.0',
               'repository': {'full_name': release.REPOSITORY},
               'head_repository': {'full_name': release.REPOSITORY}}
     class API:
