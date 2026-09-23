@@ -107,7 +107,8 @@ def upsert(base, fields):
 
 def valid_origin(run, tag, sha):
     branch = run.get("head_branch")
-    bound = branch == tag
+    bound = branch == tag or (run.get("event") == "workflow_dispatch" and branch == "main"
+                             and run.get("display_title") == f"Release plugin wheel {tag}")
     return bool(bound and run.get("head_sha") == sha
                 and run.get("event") in {"push", "release", "workflow_dispatch"}
                 and run.get("status") == "completed" and run.get("conclusion") == "success"
@@ -210,11 +211,28 @@ def origin(api, tag, sha):
     runs = api.pages(f"/repos/{REPOSITORY}/actions/workflows/release.yml/runs?head_sha={sha}&status=success",
                      "workflow_runs")
     matches = [r for r in runs if valid_origin(r, tag, sha)]
+    # A manually dispatched recovery runs on main but checks out the verified tag.
+    # Bind its run-name to the tag and require tag -> automation SHA -> current main.
+    def manual_origin(run):
+        head = run.get("head_sha", "")
+        if not (run.get("event") == "workflow_dispatch" and run.get("head_branch") == "main"
+                and SHA.fullmatch(head) and valid_origin(run, tag, head)):
+            return False
+        for base, target in ((sha, head), (head, TRUSTED_BRANCH)):
+            compare = api.call(f"/repos/{REPOSITORY}/compare/{base}...{target}")
+            if not (compare["status"] in {"ahead", "identical"}
+                    and compare["merge_base_commit"]["sha"] == base):
+                return False
+        return True
+    if not matches:
+        manual = api.pages(f"/repos/{REPOSITORY}/actions/workflows/release.yml/runs?event=workflow_dispatch&status=success",
+                           "workflow_runs")
+        matches = [r for r in manual if manual_origin(r)]
     require(matches, "no successful Release plugin wheel run bound to tag/source")
     # Prefer the actual tag publication rather than a later retry.
     selected = min(matches, key=lambda r: r["id"])
     live = api.call(f"/repos/{REPOSITORY}/actions/runs/{selected['id']}")
-    require(valid_origin(live, tag, sha), "origin changed")
+    require(valid_origin(live, tag, sha) or manual_origin(live), "origin changed")
     return f"https://github.com/{REPOSITORY}/actions/runs/{live['id']}"
 
 
@@ -230,6 +248,11 @@ def event_tag(api, event, event_name, ref, manual_tag):
     require(all(live.get(k) == supplied.get(k) for k in
                 ("head_sha", "head_branch", "event", "conclusion", "path")), "event/run mismatch")
     tag = live["head_branch"]
+    if live.get("event") == "workflow_dispatch" and tag == TRUSTED_BRANCH:
+        title = live.get("display_title", "")
+        prefix = "Release plugin wheel "
+        require(title.startswith(prefix), "manual release run must name a tag")
+        tag = title[len(prefix):]
     version(tag)
     require(valid_origin(live, tag, live["head_sha"]), "untrusted triggering release run")
     return tag

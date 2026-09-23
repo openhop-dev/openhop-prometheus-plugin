@@ -110,6 +110,40 @@ def test_release_and_origin_require_tag_bound_success():
         release.event_tag(None, {}, 'workflow_dispatch', 'refs/heads/dev', 'v1.0.0')
 
 
+def test_recovery_origin_must_bind_tag_source_and_main_run():
+    tag_sha = SHA
+    main_sha = 'c' * 40
+    manual = {'id': 34, 'head_branch': 'main', 'head_sha': main_sha,
+              'event': 'workflow_dispatch', 'display_title': 'Release plugin wheel v1.0.0',
+              'status': 'completed', 'conclusion': 'success',
+              'path': '.github/workflows/release.yml', 'name': 'Release plugin wheel',
+              'repository': {'full_name': release.REPOSITORY},
+              'head_repository': {'full_name': release.REPOSITORY}}
+    class API:
+        def __init__(self, bad=False):
+            self.bad = bad
+        def pages(self, path, key=None):
+            assert key == 'workflow_runs'
+            return [manual] if 'event=workflow_dispatch' in path else []
+        def call(self, path):
+            if path.endswith('/actions/runs/34'):
+                return manual
+            if '/compare/' in path:
+                left, right = path.split('/compare/')[1].split('...')
+                if self.bad or (left, right) not in ((tag_sha, main_sha), (main_sha, 'main')):
+                    return {'status': 'diverged', 'merge_base_commit': {'sha': 'd' * 40}}
+                return {'status': 'ahead', 'merge_base_commit': {'sha': left}}
+            raise AssertionError(path)
+    assert release.event_tag(API(), {'workflow_run': manual}, 'workflow_run', '', '') == 'v1.0.0'
+    assert release.origin(API(), 'v1.0.0', tag_sha).endswith('/actions/runs/34')
+    with pytest.raises(ValueError, match='no successful'):
+        release.origin(API(bad=True), 'v1.0.0', tag_sha)
+    for mutation in ({'display_title': 'Release plugin wheel v1.0.1'},
+                     {'head_branch': 'dev'}, {'conclusion': 'failure'}):
+        changed = dict(manual, **mutation)
+        assert not release.valid_origin(changed, 'v1.0.0', main_sha)
+
+
 def test_public_bytes_only_and_missing_registration_fail_closed(monkeypatch):
     class Policy:
         def wheel_url(self, version, plugin):

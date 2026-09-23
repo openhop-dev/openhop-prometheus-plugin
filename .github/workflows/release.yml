@@ -1,6 +1,13 @@
 name: Release plugin wheel
+run-name: Release plugin wheel ${{ inputs.release_tag || github.ref_name }}
 
 on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing vMAJOR.MINOR.PATCH tag (run on main)
+        required: true
+        type: string
   push:
     tags:
       - "v*"
@@ -8,12 +15,61 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: prometheus-release-${{ inputs.release_tag || github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
   build-release:
+    if: >-
+      github.repository == 'openhop-dev/openhop-prometheus-plugin' &&
+      (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Resolve existing tag and check release state
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+        run: |
+          [[ "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" --jq '.object.sha')"
+          kind="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" --jq '.object.type')"
+          for _ in 1 2 3 4 5; do
+            if [[ "$kind" == commit ]]; then break; fi
+            [[ "$kind" == tag ]]
+            kind_next="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$sha" --jq '.object.type')"
+            sha="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$sha" --jq '.object.sha')"
+            kind="$kind_next"
+          done
+          [[ "$kind" == commit && "$sha" =~ ^[0-9a-f]{40}$ ]]
+          main_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+          relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$sha...$main_sha" --jq '.status')"
+          [[ "$relation" == ahead || "$relation" == identical ]]
+          if release="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" --jq '{tag_name,draft,prerelease,assets:[.assets[].name]}' 2>/dev/null)"; then
+            RELEASE_STATE="$release" python - <<'PY'
+          import json, os
+          release = json.loads(os.environ['RELEASE_STATE'])
+          assert release['tag_name'] == os.environ['RELEASE_TAG']
+          assert not release['draft'] and not release['prerelease']
+          assert release['assets'] == [], 'release already has assets; inspect before retry'
+          PY
+          else
+            response="$(gh api -i "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" 2>&1 || true)"
+            [[ "$response" == *'HTTP/2.0 404'* || "$response" == *'HTTP/2 404'* || "$response" == *'HTTP/1.1 404'* ]] || { echo 'Release lookup failed; inspect API before retry' >&2; exit 1; }
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+      # The ref is the validated commit SHA from the existing tag, never a user-supplied ref.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.source.outputs.sha }}
+          persist-credentials: false
 
       - uses: actions/setup-python@v5
         with:
@@ -21,7 +77,7 @@ jobs:
 
       - name: Require tag to match package version
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ steps.source.outputs.tag }}
         run: |
           python - <<'PY'
           import json
@@ -54,8 +110,14 @@ jobs:
         run: |
           python -m build --wheel
           test "$(find dist -maxdepth 1 -name '*.whl' | wc -l)" -eq 1
-          VERSION=$(python -c "import tomllib; print(tomllib.loads(open('pyproject.toml').read())['project']['version'])")
-          python -c "import zipfile; z=zipfile.ZipFile(f'dist/openhop-prometheus-plugin-v{VERSION}-wheel.zip','w',zipfile.ZIP_DEFLATED); z.write(f'dist/openhop_prometheus_plugin-{VERSION}-py3-none-any.whl',f'openhop_prometheus_plugin-{VERSION}-py3-none-any.whl'); z.close()"
+          python - <<'PY'
+          import pathlib, tomllib, zipfile
+          version = tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version']
+          wheel = pathlib.Path(f'dist/openhop_prometheus_plugin-{version}-py3-none-any.whl')
+          assert wheel.is_file()
+          with zipfile.ZipFile(f'dist/openhop-prometheus-plugin-v{version}-wheel.zip', 'w', zipfile.ZIP_DEFLATED) as bundle:
+              bundle.write(wheel, wheel.name)
+          PY
 
       - name: Verify openHop wheel resources
         run: |
@@ -94,7 +156,9 @@ jobs:
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.source.outputs.tag }}
+          target_commitish: ${{ steps.source.outputs.sha }}
           files: |
             dist/*.whl
             dist/*-wheel.zip
-          generate_release_notes: true
+          fail_on_unmatched_files: true
