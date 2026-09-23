@@ -19,7 +19,8 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
   "pytest>=8,<9",
-  "ruff>=0.6"
+  "ruff>=0.6",
+  "tomli>=2; python_version < '3.11'"
 ]
 browser = ["playwright>=1.50,<2"]
 

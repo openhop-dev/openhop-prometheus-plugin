@@ -40,7 +40,10 @@ def test_initial_upsert_preserves_others_and_is_not_implicitly_certified():
     entry = result['plugins'][1]
     assert entry['id'] == release.PLUGIN
     assert entry['category'] == 'integration'
-    assert entry['logo'].endswith(f'/{SHA}/ui/assets/prometheus-logo.svg')
+    assert entry['logo'] == (f'https://raw.githubusercontent.com/{release.REPOSITORY}/'
+                             f'{SHA}/ui/assets/prometheus-logo.svg')
+    logo = ROOT / 'ui/assets/prometheus-logo.svg'
+    assert logo.read_bytes().startswith(b'<svg xmlns="http://www.w3.org/2000/svg"')
     assert entry['min_repeater_version'] == '0.3.0'
     assert {key: entry[key] for key in release.FIELDS} == fields()
     assert release.upsert(result, fields()) == result
