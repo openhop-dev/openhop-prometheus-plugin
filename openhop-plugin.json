@@ -2,7 +2,7 @@
   "schema": 1,
   "id": "openhop.prometheus",
   "name": "Prometheus",
-  "version": "0.2.0",
+  "version": "1.0.0",
   "description": "Prometheus metrics exporter and monitoring dashboard for openHop Repeater /api/stats.",
   "runtime": {
     "type": "python",

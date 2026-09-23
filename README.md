@@ -2,7 +2,7 @@
 
 A lightweight openHop Repeater plugin that exports Repeater telemetry as Prometheus metrics and serves a small embedded dashboard.
 
-This repository is private during integration testing and is expected to be made public after validation.
+The repository is currently private. Publication is a separate decision from building or tagging a release.
 
 ## Runtime flow
 
@@ -23,7 +23,7 @@ The plugin does not run a second host collector. System metrics come from the Re
 The plugin manager should provide:
 
 ```text
-OPENHOP_PLUGIN_DATA=/var/lib/openhop/plugins/openhop.prometheus/data
+OPENHOP_PLUGIN_DATA=/var/lib/openhop_repeater/plugins/openhop.prometheus/data
 ```
 
 With `OPENHOP_PLUGIN_DATA` set, the plugin reads:
@@ -42,6 +42,7 @@ http://127.0.0.1:9109/healthz
 ```
 
 Collection runs in the background. Scrapes read a thread-safe snapshot and do not block on live Repeater API calls.
+The metrics and health endpoints have no application-level authentication. Keep the default loopback bind unless a remote scraper needs access; for a LAN/VPN bind, restrict port 9109 to trusted monitoring hosts with network controls. The Repeater dashboard's JWT protects its `/api/plugins/settings` and `/api/plugins/runtime` endpoints, not this separate scrape listener. Plugin HTML and JavaScript are publicly served; the protected API enforces settings access.
 
 ## config.json
 
@@ -161,6 +162,9 @@ share/openhop/plugins/openhop.prometheus/config.default.json
 share/openhop/plugins/openhop.prometheus/ui/index.html
 share/openhop/plugins/openhop.prometheus/ui/app.js
 share/openhop/plugins/openhop.prometheus/ui/styles.css
+share/openhop/plugins/openhop.prometheus/ui/assets/prometheus-logo.svg
+share/openhop/plugins/openhop.prometheus/ui/assets/PROMETHEUS-LICENSE
+share/openhop/plugins/openhop.prometheus/ui/assets/PROVENANCE.md
 ```
 
 ## Standalone development
@@ -168,7 +172,8 @@ share/openhop/plugins/openhop.prometheus/ui/styles.css
 ```bash
 python3 -m venv .venv
 . .venv/bin/activate
-pip install -e '.[dev]'
+pip install -e '.[dev,browser]'
+playwright install chromium
 openhop-prometheus
 ```
 
@@ -192,10 +197,26 @@ python -m build --wheel
 Output example:
 
 ```text
-dist/openhop_prometheus_plugin-0.2.0-py3-none-any.whl
+dist/openhop_prometheus_plugin-1.0.0-py3-none-any.whl
 ```
 
 The openHop plugin manager installs the wheel release asset.
+
+## UI development
+
+The embedded UI follows the openHop NOMAD plugin light/dark palette. The official
+Prometheus logo is bundled offline under `ui/assets/`, with pinned provenance
+and its upstream license. All five dashboard tabs and settings remain available.
+
+Run browser regressions explicitly (otherwise they skip without Playwright):
+
+```bash
+.venv/bin/pip install -e '.[dev,browser]'
+.venv/bin/playwright install chromium
+.venv/bin/pytest -q
+```
+
+Browser tests use an in-memory settings API, not a live Repeater.
 
 ## CLI diagnostics
 

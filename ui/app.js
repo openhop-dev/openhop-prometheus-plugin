@@ -40,6 +40,26 @@
   let formDirty = false;
 
   const $ = (id) => document.getElementById(id);
+  const helpButtons = [...document.querySelectorAll(".help-button")];
+  function closeHelp() {
+    helpButtons.forEach(button => {
+      button.setAttribute("aria-expanded", "false");
+      $(button.getAttribute("aria-controls")).hidden = true;
+    });
+  }
+  helpButtons.forEach(button => button.addEventListener("click", () => {
+    const open = button.getAttribute("aria-expanded") !== "true";
+    closeHelp();
+    button.setAttribute("aria-expanded", String(open));
+    $(button.getAttribute("aria-controls")).hidden = !open;
+  }));
+  document.addEventListener("keydown", event => {
+    if (event.key === "Escape") closeHelp();
+  });
+  document.addEventListener("click", event => {
+    if (!event.target.closest(".help-button, .field-help")) closeHelp();
+  });
+
   const notice = $("notice");
   const settingsForm = $("settings-form");
 

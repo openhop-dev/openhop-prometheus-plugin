@@ -19,26 +19,49 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Require tag to match package version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import pathlib
+          import tomllib
+
+          root = pathlib.Path('.')
+          version = tomllib.loads((root / 'pyproject.toml').read_text())['project']['version']
+          assert os.environ['RELEASE_TAG'] == f'v{version}', 'release tag does not match package version'
+          assert json.loads((root / 'openhop-plugin.json').read_text())['version'] == version
+          assert f'v{version}</span>' in (root / 'ui/index.html').read_text()
+          assert f'__version__ = "{version}"' in (root / 'src/openhop_prometheus_plugin/__init__.py').read_text()
+          print(f'Version references match {version}')
+          PY
+
       - name: Install build and test tools
         run: |
           python -m pip install --upgrade pip build
-          python -m pip install -e '.[dev]'
+          python -m pip install -e '.[dev,browser]'
+          python -m playwright install --with-deps chromium
 
       - name: Test
         run: |
           python -m compileall -q src tests
-          pytest -q
+          pytest -q -rs
           node --check ui/app.js
 
-      - name: Build wheel
+      - name: Build wheel and zip bundle
         run: |
           python -m build --wheel
           test "$(find dist -maxdepth 1 -name '*.whl' | wc -l)" -eq 1
+          VERSION=$(python -c "import tomllib; print(tomllib.loads(open('pyproject.toml').read())['project']['version'])")
+          python -c "import zipfile; z=zipfile.ZipFile(f'dist/openhop-prometheus-plugin-v{VERSION}-wheel.zip','w',zipfile.ZIP_DEFLATED); z.write(f'dist/openhop_prometheus_plugin-{VERSION}-py3-none-any.whl',f'openhop_prometheus_plugin-{VERSION}-py3-none-any.whl'); z.close()"
 
       - name: Verify openHop wheel resources
         run: |
           python - <<'PY'
-          import glob, json, zipfile
+          import glob, json, pathlib, zipfile
+          from email.parser import Parser
           wheel = glob.glob('dist/*.whl')
           assert len(wheel) == 1, wheel
           with zipfile.ZipFile(wheel[0]) as z:
@@ -51,16 +74,27 @@ jobs:
               next(n for n in names if 'share/openhop/plugins/openhop.prometheus/ui/index.html' in n)
               next(n for n in names if 'share/openhop/plugins/openhop.prometheus/ui/app.js' in n)
               next(n for n in names if 'share/openhop/plugins/openhop.prometheus/ui/styles.css' in n)
+              for asset in ('prometheus-logo.svg', 'PROMETHEUS-LICENSE', 'PROVENANCE.md'):
+                  next(n for n in names if n.endswith('/ui/assets/' + asset))
               manifest = json.loads(z.read(manifest_path))
               assert manifest['schema'] == 1
               assert manifest['id'] == 'openhop.prometheus'
               assert manifest['runtime'] == {'type': 'python', 'entrypoint': 'openhop-prometheus'}
               assert manifest['ui'] == {'type': 'application', 'entry': 'ui/index.html'}
+              metadata_path = next(n for n in names if n.endswith('.dist-info/METADATA'))
+              metadata = Parser().parsestr(z.read(metadata_path).decode())
+              assert metadata['Version'] == manifest['version']
+          bundle = pathlib.Path(f"dist/openhop-prometheus-plugin-v{manifest['version']}-wheel.zip")
+          with zipfile.ZipFile(bundle) as z:
+              assert z.namelist() == [pathlib.Path(wheel[0]).name]
+              assert z.read(pathlib.Path(wheel[0]).name) == pathlib.Path(wheel[0]).read_bytes()
           print('verified', wheel[0])
           PY
 
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.whl
+          files: |
+            dist/*.whl
+            dist/*-wheel.zip
           generate_release_notes: true
