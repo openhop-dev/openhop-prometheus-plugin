@@ -16,10 +16,11 @@ def test_theme_navigation_and_save(theme, width):
     sync_playwright = pytest.importorskip("playwright.sync_api").sync_playwright
 
     config = json.loads((ROOT / 'config.default.json').read_text())
-    posts, errors, external = [], [], []
+    posts, auth_headers, errors, external = [], [], [], []
     with sync_playwright() as pw:
         browser = pw.chromium.launch()
         page = browser.new_page(viewport={'width': width, 'height': 1000}, color_scheme=theme)
+        page.add_init_script("localStorage.setItem('pymc_jwt_token', 'browser-test-jwt')")
         page.on('pageerror', lambda error: errors.append(str(error)))
 
         def route(request):
@@ -29,6 +30,10 @@ def test_theme_navigation_and_save(theme, width):
                 external.append(request.request.url)
                 request.abort()
             elif url.path == '/api/plugins/settings':
+                auth_headers.append(request.request.headers.get('authorization'))
+                if auth_headers[-1] != 'Bearer browser-test-jwt':
+                    request.fulfill(status=401)
+                    return
                 if request.request.method == 'POST':
                     payload = request.request.post_data_json
                     posts.append(payload)
@@ -83,6 +88,7 @@ def test_theme_navigation_and_save(theme, width):
         assert posts[-1]['config']['port'] == 9110
         assert posts[-1]['config']['repeater_verify_tls'] is False
         assert posts[-1]['restart'] is True
+        assert auth_headers and all(value == 'Bearer browser-test-jwt' for value in auth_headers)
         page.reload()
         page.locator('[data-tab="settings"]').click()
         page.wait_for_function("document.querySelector('#port').value === '9110'")
@@ -96,4 +102,37 @@ def test_theme_navigation_and_save(theme, width):
             page.screenshot(path=f'{folder}/{theme}-{width}-overview.png', full_page=True)
         assert not errors
         assert not external
+        browser.close()
+
+
+@pytest.mark.parametrize('stored_token,expected', [
+    (None, 'Authentication is required.'),
+    ('expired-test-jwt', 'session has expired.'),
+])
+def test_settings_401_explains_dashboard_login(stored_token, expected):
+    sync_playwright = pytest.importorskip("playwright.sync_api").sync_playwright
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        page = browser.new_page()
+        if stored_token:
+            page.add_init_script(f"localStorage.setItem('pymc_jwt_token', {json.dumps(stored_token)})")
+
+        def route(request):
+            url = urlparse(request.request.url)
+            if url.path == '/api/plugins/settings':
+                assert request.request.headers.get('authorization') == (
+                    f'Bearer {stored_token}' if stored_token else None
+                )
+                request.fulfill(status=401)
+            else:
+                file = ROOT / 'ui' / url.path.removeprefix('/plugins/openhop.prometheus/')
+                if file.is_file():
+                    request.fulfill(body=file.read_bytes(), content_type=mimetypes.guess_type(file)[0] or 'application/octet-stream')
+                else:
+                    request.fulfill(status=404)
+
+        page.route('**/*', route)
+        page.goto('http://plugin.test/plugins/openhop.prometheus/index.html')
+        page.wait_for_function("text => document.querySelector('#notice').textContent.includes(text)", arg=expected)
+        assert page.locator('#notice').is_visible()
         browser.close()

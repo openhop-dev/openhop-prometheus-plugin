@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - dev
+      - 'release/**'
   pull_request:
 
 permissions:
@@ -24,12 +25,13 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip build
-          python -m pip install -e '.[dev]'
+          python -m pip install -e '.[dev,browser]'
+          python -m playwright install --with-deps chromium
 
       - name: Static and unit checks
         run: |
           python -m compileall -q src tests
-          pytest -q
+          pytest -q -rs
           node --check ui/app.js
 
       - name: Build wheel

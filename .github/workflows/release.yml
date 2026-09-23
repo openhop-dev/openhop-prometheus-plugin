@@ -19,15 +19,35 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Require tag to match package version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import pathlib
+          import tomllib
+
+          root = pathlib.Path('.')
+          version = tomllib.loads((root / 'pyproject.toml').read_text())['project']['version']
+          assert os.environ['RELEASE_TAG'] == f'v{version}', 'release tag does not match package version'
+          assert json.loads((root / 'openhop-plugin.json').read_text())['version'] == version
+          assert f'v{version}</span>' in (root / 'ui/index.html').read_text()
+          assert f'__version__ = "{version}"' in (root / 'src/openhop_prometheus_plugin/__init__.py').read_text()
+          print(f'Version references match {version}')
+          PY
+
       - name: Install build and test tools
         run: |
           python -m pip install --upgrade pip build
-          python -m pip install -e '.[dev]'
+          python -m pip install -e '.[dev,browser]'
+          python -m playwright install --with-deps chromium
 
       - name: Test
         run: |
           python -m compileall -q src tests
-          pytest -q
+          pytest -q -rs
           node --check ui/app.js
 
       - name: Build wheel
@@ -39,6 +59,7 @@ jobs:
         run: |
           python - <<'PY'
           import glob, json, zipfile
+          from email.parser import Parser
           wheel = glob.glob('dist/*.whl')
           assert len(wheel) == 1, wheel
           with zipfile.ZipFile(wheel[0]) as z:
@@ -51,11 +72,16 @@ jobs:
               next(n for n in names if 'share/openhop/plugins/openhop.prometheus/ui/index.html' in n)
               next(n for n in names if 'share/openhop/plugins/openhop.prometheus/ui/app.js' in n)
               next(n for n in names if 'share/openhop/plugins/openhop.prometheus/ui/styles.css' in n)
+              for asset in ('prometheus-logo.svg', 'PROMETHEUS-LICENSE', 'PROVENANCE.md'):
+                  next(n for n in names if n.endswith('/ui/assets/' + asset))
               manifest = json.loads(z.read(manifest_path))
               assert manifest['schema'] == 1
               assert manifest['id'] == 'openhop.prometheus'
               assert manifest['runtime'] == {'type': 'python', 'entrypoint': 'openhop-prometheus'}
               assert manifest['ui'] == {'type': 'application', 'entry': 'ui/index.html'}
+              metadata_path = next(n for n in names if n.endswith('.dist-info/METADATA'))
+              metadata = Parser().parsestr(z.read(metadata_path).decode())
+              assert metadata['Version'] == manifest['version']
           print('verified', wheel[0])
           PY
 

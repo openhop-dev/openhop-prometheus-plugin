@@ -107,7 +107,7 @@ class RepeaterCollector(BaseCollector):
     def collect(self) -> list[MetricSample]:
         headers = {
             "Accept": "application/json",
-            "User-Agent": "openhop-prometheus/0.2.0",
+            "User-Agent": "openhop-prometheus/1.0.0",
         }
         _apply_repeater_auth_headers(headers, self.config.repeater_api_token)
 
