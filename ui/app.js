@@ -18,6 +18,7 @@
     repeater_stats_path: "/api/stats",
     repeater_api_token: "",
     repeater_verify_tls: true,
+    log_level: "",
     test_endpoint_request_id: "",
     test_repeater_request_id: "",
     refresh_request_id: ""
@@ -32,7 +33,7 @@
     "bind_host", "port", "metrics_path", "collection_interval_seconds",
     "collection_timeout_seconds", "repeater_enabled", "repeater_scheme",
     "repeater_host", "repeater_port", "repeater_stats_path",
-    "repeater_api_token", "repeater_verify_tls"
+    "repeater_api_token", "repeater_verify_tls", "log_level"
   ];
 
   let currentConfig = { ...defaults };
@@ -199,7 +200,8 @@
       repeater_port: repeaterPort,
       repeater_stats_path: validatePath($("repeater_stats_path").value, "Repeater stats path"),
       repeater_api_token: $("repeater_api_token").value.trim(),
-      repeater_verify_tls: $("repeater_verify_tls").checked
+      repeater_verify_tls: $("repeater_verify_tls").checked,
+      log_level: $("log_level").value
     };
     if (!config.bind_host) throw new Error("Bind address is required.");
     if (!config.repeater_host) throw new Error("Repeater host is required.");
