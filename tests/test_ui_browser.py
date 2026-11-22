@@ -58,7 +58,7 @@ def test_theme_navigation_and_save(theme, width):
             assert page.locator(f'#tab-{tab}').is_visible()
             assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
         buttons = page.locator('.help-button')
-        assert buttons.count() == 12
+        assert buttons.count() == 13
         for button in buttons.all():
             field = page.locator('#' + button.get_attribute('data-field'))
             before = field.evaluate('(el) => [el.value, el.checked]')
@@ -80,6 +80,8 @@ def test_theme_navigation_and_save(theme, width):
             assert button.get_attribute('aria-expanded') == 'false'
         page.locator('#port').fill('9110')
         page.locator('#repeater_verify_tls').uncheck()
+        assert page.locator('#log_level').input_value() == ''
+        page.locator('#log_level').select_option('WARNING')
         page.locator('[data-tab="overview"]').click()
         page.locator('[data-tab="settings"]').click()
         assert page.locator('#port').input_value() == '9110'
@@ -87,12 +89,14 @@ def test_theme_navigation_and_save(theme, width):
         page.wait_for_function("document.querySelector('#notice').textContent.includes('Saved.')")
         assert posts[-1]['config']['port'] == 9110
         assert posts[-1]['config']['repeater_verify_tls'] is False
+        assert posts[-1]['config']['log_level'] == 'WARNING'
         assert posts[-1]['restart'] is True
         assert auth_headers and all(value == 'Bearer browser-test-jwt' for value in auth_headers)
         page.reload()
         page.locator('[data-tab="settings"]').click()
         page.wait_for_function("document.querySelector('#port').value === '9110'")
         assert not page.locator('#repeater_verify_tls').is_checked()
+        assert page.locator('#log_level').input_value() == 'WARNING'
         folder = os.environ.get('UI_SCREENSHOTS')
         if folder:
             Path(folder).mkdir(parents=True, exist_ok=True)
