@@ -15,10 +15,12 @@ from prometheus_client import CollectorRegistry, generate_latest
 from . import __version__
 from .actions import process_actions
 from .config import PluginConfig, load_config
+from .diagnostics import FailureLog, safe_error
 from .http_server import MetricsHTTPServer
 from .manager import CollectionManager
 from .metrics import SnapshotCollector
-from .runtime_snapshot import publish_runtime_snapshot
+from .runtime_snapshot import HEARTBEAT_SECONDS, publish_runtime_snapshot
+from .runtime_store import RuntimePublisher, RuntimeStorageError
 from .state import MetricsState
 
 LOGGER = logging.getLogger("openhop.prometheus")
@@ -124,6 +126,32 @@ def main() -> int:
     state.set_running(True)
     manager = CollectionManager(state)
     http_server: MetricsHTTPServer | None = None
+    next_collection_at: float | None = None
+    publisher: RuntimePublisher | None = None
+    failures = FailureLog()
+    publish_lock = threading.Lock()
+    heartbeat_stop = threading.Event()
+    heartbeat_thread: threading.Thread | None = None
+
+    def publish() -> None:
+        if publisher is None:
+            return
+        with publish_lock:
+            try:
+                publish_runtime_snapshot(
+                    data_dir, config, state, http_server,
+                    next_collection_at=next_collection_at, publisher=publisher,
+                )
+            except Exception as exc:
+                failures.report("runtime_snapshot", exc, secret=config.repeater_api_token)
+            else:
+                failures.recovered("runtime_snapshot")
+
+    def heartbeat() -> None:
+        # Status/scrape counts stay current even while a collector is blocked.
+        # This never starts collection or writes persistent files.
+        while not heartbeat_stop.wait(HEARTBEAT_SECONDS):
+            publish()
 
     LOGGER.info(
         "starting plugin_id=%s version=%s data_dir=%s",
@@ -134,17 +162,25 @@ def main() -> int:
 
     try:
         try:
+            publisher = RuntimePublisher(data_dir)
+        except RuntimeStorageError as exc:
+            # Do not sacrifice Prometheus collection when RAM status is down,
+            # and never silently substitute a persistent runtime file.
+            failures.report("runtime_snapshot_unavailable", exc)
+        try:
             http_server = _start_server(config, state)
         except Exception as exc:
             state.mark_collection_fatal_error(str(exc))
-            try:
-                publish_runtime_snapshot(data_dir, config, state, None, last_error=str(exc))
-            except Exception:
-                LOGGER.exception("runtime_snapshot_publish_failed")
-            LOGGER.error("unable to start metrics HTTP endpoint: %s", exc)
+            publish()
+            LOGGER.error("unable to start metrics HTTP endpoint: %s", safe_error(exc, config.repeater_api_token))
             return 2
 
-        next_collection_at: float | None = None
+        publish()
+        if publisher is not None:
+            heartbeat_thread = threading.Thread(
+                target=heartbeat, name="openhop-prometheus-runtime", daemon=True,
+            )
+            heartbeat_thread.start()
 
         while not stop.is_set():
             cycle_error: str | None = None
@@ -152,9 +188,11 @@ def main() -> int:
                 # Reload config each cycle. Normal UI saves request a plugin
                 # restart, but this also supports safe manual edits.
                 latest = load_config(data_dir)
-                if http_server is not None and not http_server.matches(latest):
-                    LOGGER.info("HTTP bind/path changed; restarting metrics listener")
-                    http_server.stop()
+                if http_server is None or not http_server.matches(latest):
+                    if http_server is not None:
+                        LOGGER.info("HTTP bind/path changed; restarting metrics listener")
+                        http_server.stop()
+                    http_server = None
                     http_server = _start_server(latest, state)
                 config = latest
                 _apply_log_level(config)
@@ -164,30 +202,14 @@ def main() -> int:
                     process_actions(data_dir, config, manager, http_server)
 
                 next_collection_at = time.time() + config.collection_interval_seconds
-                publish_runtime_snapshot(
-                    data_dir,
-                    config,
-                    state,
-                    http_server,
-                    next_collection_at=next_collection_at,
-                    last_error=None,
-                )
+                publish()
+                failures.recovered("collection_cycle")
             except Exception as exc:
                 cycle_error = str(exc)
                 state.mark_collection_fatal_error(cycle_error)
-                LOGGER.exception("collection_cycle_failed")
+                failures.report("collection_cycle", exc, secret=config.repeater_api_token, level=logging.ERROR)
                 next_collection_at = time.time() + min(30, config.collection_interval_seconds)
-                try:
-                    publish_runtime_snapshot(
-                        data_dir,
-                        config,
-                        state,
-                        http_server,
-                        next_collection_at=next_collection_at,
-                        last_error=cycle_error,
-                    )
-                except Exception:
-                    LOGGER.exception("runtime_snapshot_publish_failed")
+                publish()
 
             if args.once:
                 return 0
@@ -196,16 +218,19 @@ def main() -> int:
             stop.wait(wait_seconds)
 
     finally:
+        heartbeat_stop.set()
+        if heartbeat_thread is not None:
+            heartbeat_thread.join()
         state.set_running(False)
         if http_server is not None:
             try:
                 http_server.stop()
-            except Exception:
-                LOGGER.exception("metrics_http_stop_failed")
-        try:
-            publish_runtime_snapshot(data_dir, config, state, None)
-        except Exception:
-            LOGGER.exception("runtime_snapshot_shutdown_publish_failed")
+            except Exception as exc:
+                failures.report("metrics_http_stop", exc, secret=config.repeater_api_token)
+        http_server = None
+        publish()
+        if publisher is not None:
+            publisher.close()
 
     LOGGER.info("plugin stopped")
     return 0

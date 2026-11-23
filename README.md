@@ -32,6 +32,57 @@ With `OPENHOP_PLUGIN_DATA` set, the plugin reads:
 $OPENHOP_PLUGIN_DATA/config.json
 ```
 
+### Runtime storage and upgrades
+
+The dashboard runtime bridge requires **openHop Repeater 1.1.2 or later** and
+Linux with a writable, shared `/dev/shm` tmpfs. Standard native and single-container
+Repeater installations already provide this; no new listener, mount or systemd
+setting is needed. If the manager and plugin run in separate containers, they must
+see the same tmpfs and run under a compatible service UID.
+
+Upgrade through Plugin Manager: stop Prometheus, upload the new wheel, then start
+Prometheus again. A catalogue update uses the same versioned wheel and manages the
+restart. Existing settings, the Repeater API token and completed action IDs are
+retained; there is no need to reconfigure the exporter. Uploading a local wheel
+alone does not restart an already-running plugin on older Repeater versions.
+
+- `config.json` holds settings. Collection, dashboard polling, error reporting and
+  shutdown never rewrite it. An old `_runtime` field is ignored and left untouched
+  during upgrade; the next intentional settings save removes that obsolete field.
+- `runtime.json` is a stable compatibility symlink into an owned, mode-0700
+  `/dev/shm/openhop-prometheus-<uid>-<instance-hash>/` directory. The instance hash
+  is derived from the canonical plugin data directory. Only the mode-0600 RAM
+  target is atomically replaced, including during a five-second status heartbeat.
+  Snapshot size is limited to 256 KiB; the metric preview is trimmed if necessary,
+  without changing the Prometheus cache or metric counts.
+- The dashboard reads runtime separately through the existing protected
+  `/api/plugins/runtime` endpoint. Polls and scrapes do not start a collection or
+  persist a status snapshot. Stopped snapshots are labelled stopped; a running
+  snapshot that has not refreshed for 30 seconds becomes stale, not healthy.
+- RAM state is recreated on plugin start after a reboot or container replacement;
+  the persistent link is reused. An unavailable snapshot is shown as unavailable,
+  rather than falling back to legacy status in settings.
+- `action-state.json` remains persistent to prevent completed Refresh/Test requests
+  being replayed after restart or upgrade. It is written only for a new requested
+  action, not periodically. This is completed-request deduplication, not a claim
+  of crash-proof exactly-once action execution.
+
+If RAM publication is unavailable, collection and `/metrics` continue to work,
+while the dashboard reports unavailable or expired status. Plugin Manager logs
+show `runtime_snapshot_unavailable` or a bounded `runtime_snapshot` failure.
+Check that `/dev/shm` really is tmpfs, that manager/plugin see the same mount, that
+private runtime files belong to their service UID, and that `data/runtime.json`
+is not an unrelated regular file or foreign link. Restart the plugin after fixing
+startup storage access. There is **no persistent-file fallback**.
+
+Routine successful-collection detail is DEBUG only. First failures and recoveries
+remain visible; continuing failures are summarized at most once every five minutes
+per subsystem, including changing exception text. For opt-in troubleshooting, the
+existing `OPENHOP_PROMETHEUS_LOG_LEVEL=DEBUG` environment setting restores collection
+detail. Debug logs and action/configuration changes can still write to persistent
+storage. **Tmpfs may use swap**; this repair removes routine plugin file/log writes,
+not every possible physical storage write by Linux or Repeater.
+
 ## Endpoints exposed by this plugin
 
 Default listener:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Iterable
 
@@ -192,6 +192,8 @@ class MetricsState:
 
         if not snap["running"]:
             health = "stopped"
+        elif snap["last_fatal_error"] is not None:
+            health = "error"
         elif snap["last_collection_completed"] is None:
             health = "starting"
         elif enabled and len(healthy) < len(enabled):
