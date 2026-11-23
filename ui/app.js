@@ -3,6 +3,7 @@
 
   const PLUGIN_ID = "openhop.prometheus";
   const API = "/api/plugins/settings";
+  const RUNTIME_API = "/api/plugins/runtime";
   const AUTO_REFRESH_MS = 5000;
 
   const defaults = {
@@ -38,6 +39,15 @@
   let currentConfig = { ...defaults };
   let runtime = {};
   let formDirty = false;
+  let formRevision = 0;
+  let settingsLoading = false;
+  let settingsQueued = null;
+  let settingsEpoch = 0;
+  let runtimeLoading = false;
+  let runtimeQueued = false;
+  let runtimeEpoch = 0;
+  let pendingWrites = 0;
+  let writeChain = Promise.resolve();
 
   const $ = (id) => document.getElementById(id);
   const helpButtons = [...document.querySelectorAll(".help-button")];
@@ -61,6 +71,7 @@
   });
 
   const notice = $("notice");
+  const notices = {};
   const settingsForm = $("settings-form");
 
   function esc(value) {
@@ -72,9 +83,13 @@
       .replaceAll("'", "&#039;");
   }
 
-  function setNotice(message, kind = "") {
-    notice.textContent = message || "";
-    notice.className = `notice ${kind}`.trim();
+  function setNotice(message, kind = "", source = "action") {
+    if (message) notices[source] = { message, kind };
+    else delete notices[source];
+    const items = Object.values(notices);
+    notice.textContent = items.map(item => item.message).join(" ");
+    const level = ["error", "warn", "ok"].find(value => items.some(item => item.kind === value)) || "";
+    notice.className = `notice ${level}`.trim();
   }
 
   function repeaterJwt() {
@@ -129,18 +144,102 @@
     return configFromResponse(await response.json());
   }
 
-  async function postConfig(config, { restart = true } = {}) {
-    const response = await apiFetch(API, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: PLUGIN_ID, config: supportedConfig(config), restart })
-    });
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`Save failed (HTTP ${response.status})${text ? `: ${text}` : ""}`);
+  function isRecord(value) {
+    return value !== null && typeof value === "object" && !Array.isArray(value);
+  }
+
+  function runtimeTime(value) {
+    // Python publishes fractional ISO timestamps with an explicit UTC offset.
+    // Do not let Date.parse coerce numbers or timezone-free local dates.
+    if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(value)) return NaN;
+    const calendar = new Date(`${value.slice(0, 19)}Z`);
+    if (!Number.isFinite(calendar.getTime()) || calendar.toISOString().slice(0, 19) !== value.slice(0, 19)) return NaN;
+    return Date.parse(value);
+  }
+
+  function runtimeFromResponse(payload) {
+    if (!isRecord(payload) || payload.id !== PLUGIN_ID || payload.exists !== true ||
+        !isRecord(payload.runtime) || !Object.keys(payload.runtime).length) {
+      throw new Error("Plugin runtime data is unavailable. The process may still be starting; no runtime snapshot was published.");
     }
-    currentConfig = { ...defaults, ...supportedConfig(config) };
-    return response;
+    const snapshot = payload.runtime;
+    if (snapshot.schema !== 1) {
+      throw new Error("Plugin runtime data is unavailable: unsupported snapshot schema. A compatible plugin and Repeater are required.");
+    }
+    const generated = runtimeTime(snapshot.generated_at);
+    const expires = runtimeTime(snapshot.expires_at);
+    if (!Number.isFinite(generated) || !Number.isFinite(expires) || expires <= generated || generated > Date.now() + 5000) {
+      throw new Error("Plugin runtime data is unavailable: missing or invalid snapshot timestamps. Check the Repeater clock and plugin version.");
+    }
+    if (typeof snapshot.running !== "boolean" ||
+        !["healthy", "degraded", "starting", "error", "stopped"].includes(snapshot.status)) {
+      throw new Error("Plugin runtime data is unavailable: invalid snapshot status.");
+    }
+    return snapshot;
+  }
+
+  function runtimeStatus() {
+    if (!runtime.generated_at) return "unavailable";
+    if (runtime.status === "stopped" || runtime.running === false) return "stopped";
+    return Date.now() >= runtimeTime(runtime.expires_at) ? "stale" : runtime.status;
+  }
+
+  async function loadRuntime() {
+    if (runtimeLoading || pendingWrites) {
+      runtimeQueued = true;
+      return;
+    }
+    runtimeLoading = true;
+    runtimeQueued = false;
+    const epoch = runtimeEpoch;
+    try {
+      const response = await apiFetch(`${RUNTIME_API}?id=${encodeURIComponent(PLUGIN_ID)}`);
+      if (response.status === 404) {
+        throw new Error("Runtime data is unavailable (HTTP 404). A compatible openHop Repeater (1.1.2 or newer) with the protected /api/plugins/runtime endpoint is required.");
+      }
+      if (!response.ok) throw new Error(`Prometheus runtime data load failed (HTTP ${response.status})`);
+      const payload = await response.json();
+      if (epoch !== runtimeEpoch) return;
+      runtime = runtimeFromResponse(payload);
+      render();
+    } catch (error) {
+      if (epoch !== runtimeEpoch) return;
+      runtime = { status: "unavailable", last_error: error instanceof Error ? error.message : String(error) };
+      render();
+    } finally {
+      runtimeLoading = false;
+      if (runtimeQueued && !pendingWrites) loadRuntime();
+    }
+  }
+
+  function postConfig(build, { restart = true } = {}) {
+    // Mutations invalidate older reads immediately. Serialize writes as well so
+    // queued actions build on the last committed request IDs, not old settings.
+    settingsEpoch += 1;
+    runtimeEpoch += 1;
+    pendingWrites += 1;
+    runtime = { last_error: "Waiting for runtime data after the plugin restart request." };
+    render();
+    const operation = writeChain.then(async () => {
+      const config = supportedConfig(build());
+      const response = await apiFetch(API, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: PLUGIN_ID, config, restart })
+      });
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`Save failed (HTTP ${response.status})${text ? `: ${text}` : ""}`);
+      }
+      currentConfig = { ...defaults, ...config };
+      render();
+      return currentConfig;
+    });
+    writeChain = operation.catch(() => {});
+    return operation.finally(() => {
+      pendingWrites -= 1;
+      if (!pendingWrites) refreshDashboard();
+    });
   }
 
   function setValue(id, value) {
@@ -215,13 +314,12 @@
 
   async function requestAction(field, label) {
     try {
-      const config = supportedConfig(stripRuntime(currentConfig));
-      config[field] = requestId();
+      const id = requestId();
       setNotice(`${label} requested. The plugin is restarting…`);
-      await postConfig(config, { restart: true });
+      await postConfig(() => ({ ...supportedConfig(currentConfig), [field]: id }), { restart: true });
       setNotice(`${label} requested. Results will appear when the plugin is back online.`, "ok");
-      setTimeout(() => loadConfig(false).catch(() => {}), 1800);
-      setTimeout(() => loadConfig(false).catch(() => {}), 4000);
+      setTimeout(refreshDashboard, 1800);
+      setTimeout(refreshDashboard, 4000);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : String(error), "error");
     }
@@ -235,7 +333,7 @@
   function statusClass(status) {
     if (["healthy", "ok"].includes(status)) return "good";
     if (["degraded", "warning", "stale"].includes(status)) return "warn";
-    if (["error", "failed", "stopped"].includes(status)) return "bad";
+    if (["error", "failed", "stopped", "unavailable"].includes(status)) return "bad";
     return "neutral";
   }
 
@@ -292,7 +390,8 @@
   }
 
   function updateCountdown() {
-    const target = runtime.next_collection_at ? Date.parse(runtime.next_collection_at) : NaN;
+    const target = !["stale", "stopped", "unavailable"].includes(runtimeStatus()) && runtime.next_collection_at
+      ? Date.parse(runtime.next_collection_at) : NaN;
     if (!Number.isFinite(target)) {
       $("next-collection").textContent = "—";
       return;
@@ -310,18 +409,28 @@
   }
 
   function renderOverview() {
-    const status = runtime.status || "starting";
+    const status = runtimeStatus();
     const cls = statusClass(status);
     $("global-status").className = `status-pill ${cls}`;
     $("global-status").innerHTML = `<span class="status-dot"></span>${esc(status)}`;
     $("overview-health").className = `health-badge ${cls}`;
     $("overview-health").textContent = status;
-    $("overview-title").textContent = status === "healthy"
-      ? "Prometheus exporter is healthy"
-      : status === "degraded"
-        ? "Exporter is serving cached metrics with Repeater issues"
-        : status === "stopped" ? "Plugin runtime is stopped" : "Prometheus exporter is starting";
-    $("overview-summary").textContent = runtime.last_error || `${runtime.collectors_healthy || 0} of ${runtime.collector_count || 0} enabled collectors are healthy.`;
+    $("overview-title").textContent = {
+      healthy: "Prometheus exporter is healthy",
+      degraded: "Exporter is serving cached metrics with Repeater issues",
+      starting: "Prometheus exporter is starting",
+      error: "Prometheus exporter reported an error",
+      stopped: "Plugin runtime is stopped",
+      stale: "Plugin runtime snapshot is stale",
+      unavailable: "Plugin runtime data is unavailable"
+    }[status];
+    $("overview-summary").textContent = status === "stale"
+      ? `Runtime snapshot expired. Last update ${fmtAge(runtime.generated_at)} (${runtime.generated_at}); displayed metrics are last known values, not live health.`
+      : status === "unavailable"
+        ? runtime.last_error || "No runtime snapshot is available. The process may still be starting."
+        : status === "stopped"
+          ? `The plugin reported a stopped runtime. Displayed metrics are last known values. Last update ${fmtAge(runtime.generated_at)}.`
+          : runtime.last_error || `${runtime.collectors_healthy || 0} of ${runtime.collector_count || 0} enabled collectors are healthy.`;
     $("overview-endpoint").textContent = endpointUrl();
     $("last-collection").textContent = `Last collection ${fmtAge(runtime.last_collection_completed)}`;
     $("kpi-metrics").textContent = fmtNumber(runtime.metric_count || 0);
@@ -336,8 +445,9 @@
     $("overview-collectors").classList.toggle("empty-state", collectors.length === 0);
     $("overview-collectors").innerHTML = collectors.length
       ? collectors.map((item) => {
-          const c = item.healthy ? "good" : item.last_success ? "warn" : "bad";
-          const subtitle = item.healthy ? `${item.metric_count} samples · ${fmtDurationMs(item.duration_ms)}` : item.error || "No successful collection yet";
+          const cached = ["stale", "stopped"].includes(status);
+          const c = cached ? "warn" : item.healthy ? "good" : item.last_success ? "warn" : "bad";
+          const subtitle = cached ? "Last known collector state (not live)" : item.healthy ? `${item.metric_count} samples · ${fmtDurationMs(item.duration_ms)}` : item.error || "No successful collection yet";
           return `<div class="collector-row"><span class="health-light ${c}"></span><div><strong>${esc(collectorLabels[item.name] || item.name)}</strong><small>${esc(subtitle)}</small></div><div class="collector-meta">${esc(fmtAge(item.last_success))}</div></div>`;
         }).join("")
       : "No collector data yet.";
@@ -401,10 +511,12 @@
     const collectors = (runtime.collectors || []).filter((collector) => collector.enabled);
     $("collector-cards").innerHTML = collectors.length
       ? collectors.map((collector) => {
-          const cls = collector.healthy ? "good" : collector.last_success ? "warn" : "bad";
+          const cached = ["stale", "stopped"].includes(runtimeStatus());
+          const cls = cached ? "warn" : collector.healthy ? "good" : collector.last_success ? "warn" : "bad";
+          const label = cached ? "last known state" : collector.healthy ? "healthy" : "unhealthy";
           const button = collector.name === "repeater"
             ? `<button class="button compact secondary" data-test-collector="repeater" type="button">Test Repeater</button>` : "";
-          return `<article class="collector-card card"><div class="collector-card-head"><h3>${esc(collectorLabels[collector.name] || collector.name)}</h3><span class="collector-state ${cls}">${collector.healthy ? "healthy" : "unhealthy"}</span></div><div class="collector-stats"><div class="collector-stat"><span>Samples</span><strong>${esc(fmtNumber(collector.metric_count))}</strong></div><div class="collector-stat"><span>Duration</span><strong>${esc(fmtDurationMs(collector.duration_ms))}</strong></div><div class="collector-stat"><span>Last success</span><strong>${esc(fmtAge(collector.last_success))}</strong></div></div><div class="collector-error">${collector.error ? esc(collector.error) : ""}</div>${button}</article>`;
+          return `<article class="collector-card card"><div class="collector-card-head"><h3>${esc(collectorLabels[collector.name] || collector.name)}</h3><span class="collector-state ${cls}">${label}</span></div><div class="collector-stats"><div class="collector-stat"><span>Samples</span><strong>${esc(fmtNumber(collector.metric_count))}</strong></div><div class="collector-stat"><span>Duration</span><strong>${esc(fmtDurationMs(collector.duration_ms))}</strong></div><div class="collector-stat"><span>Last success</span><strong>${esc(fmtAge(collector.last_success))}</strong></div></div><div class="collector-error">${collector.error ? esc(collector.error) : ""}</div>${button}</article>`;
         }).join("")
       : `<div class="empty-state">No enabled collectors are reporting runtime state yet.</div>`;
 
@@ -470,20 +582,60 @@
     renderCollectors();
     renderPrometheus();
     updateCountdown();
+    updateRuntimeNotice();
   }
 
-  async function loadConfig(populate = false) {
+  function updateRuntimeNotice() {
+    const status = runtimeStatus();
+    setNotice(status === "unavailable"
+      ? runtime.last_error || "Plugin runtime data is unavailable. Waiting for a runtime snapshot."
+      : status === "stale" ? "Plugin runtime snapshot has expired. Values are last known data, not live health." : "",
+    status === "unavailable" ? "error" : "warn", "runtime");
+  }
+
+  function loadConfig(populate = false) {
+    if (populate) settingsEpoch += 1;
+    const intent = { populate, revision: formRevision };
+    if (settingsLoading || pendingWrites) {
+      // A deliberate Reload must survive a coalesced routine poll. Its revision
+      // guard still protects any keystrokes entered after the Reload click.
+      if (!settingsQueued || populate) settingsQueued = intent;
+      return;
+    }
+    const next = settingsQueued?.populate && !populate ? settingsQueued : intent;
+    settingsQueued = null;
+    return runConfigLoad(next);
+  }
+
+  async function runConfigLoad(intent) {
+    settingsLoading = true;
+    const epoch = settingsEpoch;
+    const revision = formRevision;
     try {
       const config = await fetchConfig();
+      if (epoch !== settingsEpoch) return;
       currentConfig = { ...defaults, ...supportedConfig(stripRuntime(config)) };
-      runtime = config._runtime && typeof config._runtime === "object" ? config._runtime : {};
-      if (populate || !formDirty) populateSettings(currentConfig);
+      if ((intent.populate && intent.revision === formRevision) || (!formDirty && revision === formRevision)) {
+        populateSettings(currentConfig);
+      }
+      setNotice("", "", "settings");
       render();
-      if (!runtime.generated_at) setNotice("Plugin runtime data is not available yet. The process may still be starting.", "warn");
-      else if (notice.classList.contains("error")) setNotice("");
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : String(error), "error");
+      if (epoch !== settingsEpoch) return;
+      setNotice(error instanceof Error ? error.message : String(error), "error", "settings");
+    } finally {
+      settingsLoading = false;
+      if (settingsQueued && !pendingWrites) {
+        const next = settingsQueued;
+        settingsQueued = null;
+        runConfigLoad(next);
+      }
     }
+  }
+
+  function refreshDashboard() {
+    loadConfig(false);
+    loadRuntime();
   }
 
   async function copyTarget(id) {
@@ -492,7 +644,7 @@
     try {
       await navigator.clipboard.writeText(el.textContent || "");
       setNotice("Copied to clipboard.", "ok");
-      setTimeout(() => { if (notice.textContent === "Copied to clipboard.") setNotice(""); }, 1200);
+      setTimeout(() => { if (notices.action?.message === "Copied to clipboard.") setNotice(""); }, 1200);
     } catch (_) {
       setNotice("Clipboard access was unavailable; select and copy the value manually.", "warn");
     }
@@ -527,12 +679,11 @@
   fieldIds.forEach((id) => {
     const el = $(id);
     if (!el) return;
-    el.addEventListener("input", () => { formDirty = true; if (id === "bind_host") updateBindWarning(); });
-    el.addEventListener("change", () => { formDirty = true; if (id === "bind_host") updateBindWarning(); });
+    el.addEventListener("input", () => { formDirty = true; formRevision += 1; if (id === "bind_host") updateBindWarning(); });
+    el.addEventListener("change", () => { formDirty = true; formRevision += 1; if (id === "bind_host") updateBindWarning(); });
   });
 
   $("reload-settings").addEventListener("click", () => {
-    formDirty = false;
     loadConfig(true);
   });
 
@@ -540,18 +691,29 @@
     event.preventDefault();
     try {
       const config = buildConfig();
+      const revision = formRevision;
       setNotice("Saving settings and restarting the Prometheus plugin…");
-      await postConfig(config, { restart: true });
-      formDirty = false;
+      const saved = await postConfig(() => ({
+        ...supportedConfig(currentConfig),
+        ...Object.fromEntries(fieldIds.map(id => [id, config[id]]))
+      }), { restart: true });
+      if (revision === formRevision) populateSettings(saved);
       setNotice("Saved. The Prometheus plugin is restarting with the new configuration.", "ok");
-      setTimeout(() => loadConfig(true).catch(() => {}), 1800);
-      setTimeout(() => loadConfig(true).catch(() => {}), 4000);
+      setTimeout(refreshDashboard, 1800);
+      setTimeout(refreshDashboard, 4000);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : String(error), "error");
     }
   });
 
-  setInterval(updateCountdown, 1000);
-  setInterval(() => loadConfig(false), AUTO_REFRESH_MS);
+  setInterval(() => {
+    const previous = $("overview-health").textContent;
+    renderOverview();
+    updateCountdown();
+    updateRuntimeNotice();
+    if (previous !== runtimeStatus()) renderCollectors();
+  }, 1000);
+  setInterval(refreshDashboard, AUTO_REFRESH_MS);
   loadConfig(true);
+  loadRuntime();
 })();

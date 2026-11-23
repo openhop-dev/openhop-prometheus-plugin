@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .collectors import PluginCollector, RepeaterCollector
 from .config import PluginConfig
+from .diagnostics import FailureLog
 from .model import CollectorResult
 from .state import MetricsState
 
@@ -14,6 +15,7 @@ LOGGER = logging.getLogger("openhop.prometheus")
 class CollectionManager:
     def __init__(self, state: MetricsState):
         self.state = state
+        self._failures = FailureLog()
 
     def build_collectors(self, config: PluginConfig):
         collectors = [PluginCollector()]
@@ -48,18 +50,18 @@ class CollectionManager:
                 self.state.update_collector(result)
                 results.append(result)
                 if result.ok:
-                    LOGGER.info(
+                    self._failures.recovered(f"collector={result.name}")
+                    LOGGER.debug(
                         "collector=%s ok metrics=%d duration_ms=%d",
                         result.name,
                         len(result.metrics),
                         round(result.duration_seconds * 1000),
                     )
                 else:
-                    LOGGER.warning(
-                        "collector=%s failed duration_ms=%d error=%s",
-                        result.name,
-                        round(result.duration_seconds * 1000),
+                    self._failures.report(
+                        f"collector={result.name}",
                         result.error,
+                        secret=config.repeater_api_token,
                     )
 
         self.state.mark_collection_completed(started)
