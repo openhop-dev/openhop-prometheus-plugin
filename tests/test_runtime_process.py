@@ -12,6 +12,7 @@ from pathlib import Path
 from urllib.request import urlopen
 
 import openhop_prometheus_plugin
+from prometheus_client.parser import text_string_to_metric_families
 
 
 @contextmanager
@@ -75,6 +76,67 @@ def _wait_snapshot(path, predicate, timeout=8):
             pass
         time.sleep(0.05)
     raise AssertionError(f"runtime did not reach expected state; last status={last.get('status')}")
+
+
+def test_live_log_level_reload_stops_and_restores_debug_without_settings_writes(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENHOP_PROMETHEUS_LOG_LEVEL", "ERROR")
+    raw = {"bind_host": "127.0.0.1", "port": _port(),
+           "collection_interval_seconds": 5, "collection_timeout_seconds": 0.5,
+           "repeater_enabled": False, "log_level": "DEBUG"}
+    config = tmp_path / "config.json"
+    runtime = tmp_path / "runtime.json"
+
+    def operator_save(level):
+        raw["log_level"] = level
+        temporary = tmp_path / "operator-config.json"
+        temporary.write_text(json.dumps(raw))
+        temporary.replace(config)
+        return config.read_bytes(), _persistent_identity(config)
+
+    def debug_collections():
+        return sum("DEBUG" in line and "collector=plugin ok" in line
+                   for line in (tmp_path / "process.log").read_text().splitlines())
+
+    with _process(tmp_path, raw) as (process, _):
+        _wait_snapshot(runtime, lambda value: value.get("status") == "healthy")
+        link = runtime.lstat()
+        assert debug_collections() == 1
+        saved, identity = operator_save("")
+        _wait_snapshot(runtime, lambda value: value.get("status") == "healthy"
+                       and value["collectors"][0]["attempts"] >= 2)
+        assert debug_collections() == 1
+        assert config.read_bytes() == saved and _persistent_identity(config) == identity
+        saved, identity = operator_save("DEBUG")
+        _wait_snapshot(runtime, lambda value: value.get("status") == "healthy"
+                       and value["collectors"][0]["attempts"] >= 3)
+        assert process.poll() is None
+        assert debug_collections() == 2
+        assert config.read_bytes() == saved and _persistent_identity(config) == identity
+        current_link = runtime.lstat()
+        assert (current_link.st_ino, current_link.st_mtime_ns) == (link.st_ino, link.st_mtime_ns)
+        with urlopen(f"http://127.0.0.1:{raw['port']}/healthz", timeout=2) as response:
+            assert json.load(response)["runtime_status"] == "healthy"
+    assert process.returncode == 0
+
+
+def test_debug_cli_diagnostics_redact_tokens_and_keep_metrics_stdout_clean(tmp_path):
+    (tmp_path / "config.json").write_text(json.dumps({
+        "repeater_enabled": False, "log_level": "DEBUG", "repeater_api_token": "fixture-token"
+    }))
+    env = dict(os.environ, OPENHOP_PLUGIN_DATA=str(tmp_path))
+    env["PYTHONPATH"] = str(Path(openhop_prometheus_plugin.__file__).resolve().parents[1])
+    command = [sys.executable, "-m", "openhop_prometheus_plugin.main"]
+    checked = subprocess.run(command + ["--check-config"], env=env, cwd=tmp_path,
+                             capture_output=True, text=True, check=True, timeout=10)
+    assert json.loads(checked.stdout)["log_level"] == "DEBUG"
+    assert json.loads(checked.stdout)["repeater_api_token"] == "configured"
+    dumped = subprocess.run(command + ["--dump-metrics"], env=env, cwd=tmp_path,
+                            capture_output=True, text=True, check=True, timeout=10)
+    assert "collector=plugin ok" in dumped.stderr and "DEBUG" in dumped.stderr
+    families = list(text_string_to_metric_families(dumped.stdout))
+    assert any(family.name.startswith("openhop_prometheus") for family in families)
+    assert "collector=plugin" not in dumped.stdout
+    assert "fixture-token" not in checked.stdout + checked.stderr + dumped.stdout + dumped.stderr
 
 
 def test_cli_heartbeat_scrapes_and_stop_never_rewrite_persistent_state(tmp_path):

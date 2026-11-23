@@ -53,9 +53,9 @@ def _configure_logging(*, stream=None) -> None:
 
 
 def _apply_log_level(config: PluginConfig) -> None:
-    """The config key wins; when empty, keep the OPENHOP_PROMETHEUS_LOG_LEVEL level."""
-    if config.log_level:
-        logging.getLogger().setLevel(getattr(logging, config.log_level))
+    """Apply the override, or restore the environment/default level on reload."""
+    level = config.log_level or os.environ.get("OPENHOP_PROMETHEUS_LOG_LEVEL", "INFO").upper()
+    logging.getLogger().setLevel(getattr(logging, level, logging.INFO))
 
 
 def _redacted_config(config: PluginConfig) -> dict:

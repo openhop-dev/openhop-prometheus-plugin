@@ -76,12 +76,35 @@ is not an unrelated regular file or foreign link. Restart the plugin after fixin
 startup storage access. There is **no persistent-file fallback**.
 
 Routine successful-collection detail is DEBUG only. First failures and recoveries
-remain visible; continuing failures are summarized at most once every five minutes
-per subsystem, including changing exception text. For opt-in troubleshooting, the
-existing `OPENHOP_PROMETHEUS_LOG_LEVEL=DEBUG` environment setting restores collection
-detail. Debug logs and action/configuration changes can still write to persistent
-storage. **Tmpfs may use swap**; this repair removes routine plugin file/log writes,
+remain visible at the default INFO level; continuing failures are summarized at
+most once every five minutes per subsystem, including changing exception text.
+Set the plugin log level to DEBUG for opt-in troubleshooting, or inherit
+`OPENHOP_PROMETHEUS_LOG_LEVEL=DEBUG` as described below. Debug logs and
+action/configuration changes can still write to persistent storage.
+**Tmpfs may use swap**; this repair removes routine plugin file/log writes,
 not every possible physical storage write by Linux or Repeater.
+
+### Log level
+
+Open **Settings → Plugin runtime → Log level**, choose a level, then select
+**Save & restart**. The same setting is available as `log_level` in the existing
+`$OPENHOP_PLUGIN_DATA/config.json` file; for example, set `"log_level": "WARNING"`.
+
+- Supported selections are `DEBUG`, `INFO`, `WARNING`, `ERROR` and `CRITICAL`.
+- The default is `"log_level": ""` (**Default (inherit)**). A missing key, JSON
+  `null` or a whitespace-only value also inherits. Existing configurations do not
+  need a migration or a background rewrite.
+- A nonempty `log_level` takes precedence over `OPENHOP_PROMETHEUS_LOG_LEVEL`.
+  When inheriting, the environment chooses the level, falling back to INFO when
+  absent or invalid. JSON level names are case-insensitive and trim surrounding
+  whitespace; invalid nonempty values are rejected.
+- Normal UI saves restart the plugin. Manual file edits are loaded at the next
+  collection cycle, including removing an override to restore the inherited
+  level. Loading/applying the level does not rewrite the settings file.
+
+DEBUG is intended for temporary diagnosis: it enables collection detail that
+Repeater may persist in its plugin log. Select a quieter level afterward, or
+return to **Default (inherit)** if the environment already sets the desired level.
 
 ## Endpoints exposed by this plugin
 
@@ -113,6 +136,7 @@ Default configuration:
   "repeater_stats_path": "/api/stats",
   "repeater_api_token": "",
   "repeater_verify_tls": true,
+  "log_level": "",
   "test_endpoint_request_id": "",
   "test_repeater_request_id": "",
   "refresh_request_id": ""
@@ -248,10 +272,11 @@ python -m build --wheel
 Output example:
 
 ```text
-dist/openhop_prometheus_plugin-1.0.0-py3-none-any.whl
+dist/openhop_prometheus_plugin-1.1.0-py3-none-any.whl
 ```
 
-The openHop plugin manager installs the wheel release asset.
+The openHop plugin manager installs the wheel release asset. See
+[CHANGELOG.md](CHANGELOG.md) for release changes.
 
 ## UI development
 

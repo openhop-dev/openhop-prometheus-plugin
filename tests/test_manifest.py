@@ -1,7 +1,10 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from openhop_prometheus_plugin import __version__
+from openhop_prometheus_plugin.config import DEFAULT_CONFIG
 
 
 def test_manifest_contract():
@@ -9,7 +12,7 @@ def test_manifest_contract():
     manifest = json.loads((root / "openhop-plugin.json").read_text())
     assert manifest["schema"] == 1
     assert manifest["id"] == "openhop.prometheus"
-    assert manifest["version"] == "1.0.0"
+    assert manifest["version"] == "1.1.0"
     assert manifest["runtime"] == {"type": "python", "entrypoint": "openhop-prometheus"}
     assert manifest["ui"] == {"type": "application", "entry": "ui/index.html"}
     defaults = manifest["config"]["defaults"]
@@ -32,3 +35,15 @@ def test_release_version_references_agree():
     assert f'openHopPrometheus/{__version__}' in (
         root / "src/openhop_prometheus_plugin/http_server.py"
     ).read_text()
+    assert f'openhop_prometheus_plugin-{__version__}-py3-none-any.whl' in (
+        root / "README.md"
+    ).read_text()
+
+
+@pytest.mark.parametrize("filename", ["config.default.json", "openhop-plugin.json"])
+def test_packaged_defaults_match_runtime_defaults(filename):
+    root = Path(__file__).resolve().parents[1]
+    defaults = json.loads((root / filename).read_text())
+    if filename == "openhop-plugin.json":
+        defaults = defaults["config"]["defaults"]
+    assert defaults == DEFAULT_CONFIG

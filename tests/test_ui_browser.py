@@ -10,6 +10,7 @@ from unittest.mock import patch
 from urllib.parse import parse_qs, urlparse
 
 from openhop_prometheus_plugin.model import CollectorResult, MetricSample
+from openhop_prometheus_plugin.config import load_config
 from openhop_prometheus_plugin.state import MetricsState
 
 import pytest
@@ -189,6 +190,37 @@ def test_polling_never_overlaps_each_api(plugin_browser):
     assert not ui.posts
 
 
+@pytest.mark.parametrize('stored,expected', [
+    ('WARNING', 'WARNING'), ('warning', 'WARNING'), ('  warning  ', 'WARNING'),
+    (' dEbUg ', 'DEBUG'), (' error ', 'ERROR'), ('critical', 'CRITICAL'),
+    ('', ''), (None, ''), ('   ', ''),
+])
+def test_manual_log_level_survives_unrelated_save_and_reload(plugin_browser, tmp_path, stored, expected):
+    settings = tmp_path / 'config.json'
+    settings.write_text(json.dumps({'log_level': stored}))
+    assert load_config(tmp_path).log_level == expected
+    ui = plugin_browser
+    ui.config['log_level'] = stored
+    ui.open()
+    expect = pytest.importorskip('playwright.sync_api').expect
+    expect(ui.page.locator('#port')).to_have_value('9109')
+    ui.poll_cycles(2)
+    assert not ui.posts
+    ui.page.locator('[data-tab="settings"]').click()
+    ui.page.locator('#port').fill('9110')
+    ui.page.locator('button[type="submit"]').click()
+    expect(ui.page.locator('#notice')).to_contain_text('Saved.')
+    posted = ui.posts[-1]['config']
+    assert posted['log_level'] == expected
+    settings.write_text(json.dumps(posted))
+    assert load_config(tmp_path).log_level == expected
+    ui.page.reload()
+    ui.page.locator('[data-tab="settings"]').click()
+    expect(ui.page.locator('#port')).to_have_value('9110')
+    expect(ui.page.locator('#log_level')).to_have_value(expected)
+
+
+@pytest.mark.parametrize('saved_log_level', ['', 'WARNING'])
 @pytest.mark.parametrize('tab,selector,field,action', [
     ('overview', '#refresh-now', 'refresh_request_id', 'refresh'),
     ('metrics', '#metrics-refresh', 'refresh_request_id', 'refresh'),
@@ -197,8 +229,9 @@ def test_polling_never_overlaps_each_api(plugin_browser):
     ('settings', '#test-repeater', 'test_repeater_request_id', 'repeater'),
     ('collectors', '[data-test-collector="repeater"]', 'test_repeater_request_id', 'repeater'),
 ])
-def test_all_explicit_actions_keep_saved_settings_and_render_runtime_results(plugin_browser, tab, selector, field, action):
+def test_all_explicit_actions_keep_saved_settings_and_render_runtime_results(plugin_browser, tab, selector, field, action, saved_log_level):
     ui = plugin_browser
+    ui.config['log_level'] = saved_log_level
     ui.open()
     page = ui.page
     expect = pytest.importorskip('playwright.sync_api').expect
@@ -206,8 +239,10 @@ def test_all_explicit_actions_keep_saved_settings_and_render_runtime_results(plu
     page.locator('[data-tab="settings"]').click()
     page.locator('#port').fill('9222')
     page.locator('#repeater_verify_tls').uncheck()
+    page.locator('#log_level').select_option('DEBUG')
     ui.tick()
     expect(page.locator('#port')).to_have_value('9222')
+    expect(page.locator('#log_level')).to_have_value('DEBUG')
     assert not page.locator('#repeater_verify_tls').is_checked()
     assert not ui.posts
     page.locator(f'[data-tab="{tab}"]').click()
@@ -222,6 +257,7 @@ def test_all_explicit_actions_keep_saved_settings_and_render_runtime_results(plu
     request_id = payload['config'][field]
     assert isinstance(request_id, str) and request_id
     expected_config[field] = request_id
+    expected_config['log_level'] = saved_log_level
     assert payload['config'] == expected_config
     message = f'{action} result <script>window.unexpectedActionScript = true</script>'
     ui.runtime['runtime']['actions'][action] = {
@@ -236,6 +272,7 @@ def test_all_explicit_actions_keep_saved_settings_and_render_runtime_results(plu
     assert page.evaluate('window.unexpectedActionScript === undefined')
     page.locator('[data-tab="settings"]').click()
     expect(page.locator('#port')).to_have_value('9222')
+    expect(page.locator('#log_level')).to_have_value('DEBUG')
     assert not page.locator('#repeater_verify_tls').is_checked()
     ui.tick(4000)
     assert len(ui.posts) == 1

@@ -13,7 +13,7 @@
       <div class="brand">
         <img class="prometheus-logo" src="assets/prometheus-logo.svg" alt="Prometheus">
         <div><div class="eyebrow">openHop plugin</div><h1>Prometheus</h1></div>
-        <span class="version">v1.0.0</span>
+        <span class="version">v1.1.0</span>
       </div>
       <div class="top-actions">
         <span id="global-status" class="status-pill neutral"><span class="status-dot"></span>Starting</span>
@@ -132,7 +132,7 @@
 
           <section class="card settings-section">
             <div class="settings-section-heading"><div><h3>Plugin runtime</h3><p>Process-wide settings for the Prometheus exporter.</p></div><span class="section-number">03</span></div>
-            <div class="field"><button id="label-log_level" type="button" class="help-button" data-field="log_level" aria-expanded="false" aria-controls="help-log_level">Log level <span class="help-indicator" aria-hidden="true">(i)</span></button><select id="log_level" aria-labelledby="label-log_level" aria-describedby="help-log_level"><option value="">Default (inherit)</option><option value="DEBUG">DEBUG</option><option value="INFO">INFO</option><option value="WARNING">WARNING</option><option value="ERROR">ERROR</option><option value="CRITICAL">CRITICAL</option></select><p class="field-help" id="help-log_level" hidden>Default: keep the level set by the OPENHOP_PROMETHEUS_LOG_LEVEL environment variable. Verbosity of the plugin logs. Use DEBUG to troubleshoot collection issues, WARNING or ERROR to reduce noise.</p></div>
+            <div class="field"><button id="label-log_level" type="button" class="help-button" data-field="log_level" aria-expanded="false" aria-controls="help-log_level">Log level <span class="help-indicator" aria-hidden="true">(i)</span></button><select id="log_level" aria-labelledby="label-log_level" aria-describedby="help-log_level"><option value="">Default (inherit)</option><option value="DEBUG">DEBUG</option><option value="INFO">INFO</option><option value="WARNING">WARNING</option><option value="ERROR">ERROR</option><option value="CRITICAL">CRITICAL</option></select><p class="field-help" id="help-log_level" hidden>Default: inherit OPENHOP_PROMETHEUS_LOG_LEVEL, or INFO when it is not set. A selected level overrides the environment. Use DEBUG for temporary collection troubleshooting, WARNING or ERROR to reduce noise. Save &amp; restart applies the selection; manual configuration edits apply at the next collection cycle, including returning to Default.</p></div>
           </section>
         </form>
       </section>

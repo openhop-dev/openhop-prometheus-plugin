@@ -247,6 +247,8 @@
     const el = $(id);
     if (!el) return;
     if (el.type === "checkbox") el.checked = Boolean(value);
+    // Match config.py's accepted manual level forms without rewriting settings.
+    else if (id === "log_level") el.value = String(value || "").trim().toUpperCase();
     else el.value = value === null || value === undefined ? "" : String(value);
   }
 
