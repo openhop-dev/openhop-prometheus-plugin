@@ -43,3 +43,15 @@ def test_ui_status_becomes_degraded_on_collector_failure():
     assert state.ui_snapshot()["status"] == "healthy"
     state.update_collector(CollectorResult("repeater", False, [], 0.1, error="fail"))
     assert state.ui_snapshot()["status"] == "degraded"
+
+
+def test_fatal_cycle_error_cannot_remain_healthy_until_recovery():
+    state = MetricsState("test")
+    state.set_running(True)
+    started = state.mark_collection_started()
+    state.mark_collection_completed(started)
+    assert state.ui_snapshot()["status"] == "healthy"
+    state.mark_collection_fatal_error("invalid settings")
+    assert state.ui_snapshot()["status"] == "error"
+    state.mark_collection_completed(state.mark_collection_started())
+    assert state.ui_snapshot()["status"] == "healthy"
