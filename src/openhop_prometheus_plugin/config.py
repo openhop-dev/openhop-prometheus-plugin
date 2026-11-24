@@ -20,11 +20,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "repeater_stats_path": "/api/stats",
     "repeater_api_token": "",
     "repeater_verify_tls": True,
+    "log_level": "",
     "test_endpoint_request_id": "",
     "test_repeater_request_id": "",
     "refresh_request_id": "",
 }
 
+_LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
 _PATH_RE = re.compile(r"^/[A-Za-z0-9._~!$&'()*+,;=:@/-]*$")
 
 
@@ -43,6 +45,8 @@ class PluginConfig:
     repeater_stats_path: str
     repeater_api_token: str
     repeater_verify_tls: bool
+
+    log_level: str
 
     test_endpoint_request_id: str
     test_repeater_request_id: str
@@ -128,6 +132,10 @@ def load_config(data_dir: str | Path) -> PluginConfig:
     if repeater_scheme not in {"http", "https"}:
         raise ValueError("repeater_scheme must be http or https")
 
+    log_level = str(cfg["log_level"] or "").strip().upper()
+    if log_level and log_level not in _LOG_LEVELS:
+        raise ValueError(f"log_level must be one of {', '.join(_LOG_LEVELS)} or empty")
+
     return PluginConfig(
         bind_host=bind_host,
         port=port,
@@ -141,6 +149,7 @@ def load_config(data_dir: str | Path) -> PluginConfig:
         repeater_stats_path=_path(cfg["repeater_stats_path"], "repeater_stats_path"),
         repeater_api_token=str(cfg["repeater_api_token"] or "").strip(),
         repeater_verify_tls=bool(cfg["repeater_verify_tls"]),
+        log_level=log_level,
         test_endpoint_request_id=str(cfg["test_endpoint_request_id"] or "").strip(),
         test_repeater_request_id=str(cfg["test_repeater_request_id"] or "").strip(),
         refresh_request_id=str(cfg["refresh_request_id"] or "").strip(),

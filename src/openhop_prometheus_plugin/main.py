@@ -52,6 +52,12 @@ def _configure_logging(*, stream=None) -> None:
     )
 
 
+def _apply_log_level(config: PluginConfig) -> None:
+    """Apply the override, or restore the environment/default level on reload."""
+    level = config.log_level or os.environ.get("OPENHOP_PROMETHEUS_LOG_LEVEL", "INFO").upper()
+    logging.getLogger().setLevel(getattr(logging, level, logging.INFO))
+
+
 def _redacted_config(config: PluginConfig) -> dict:
     value = config.user_dict()
     value["repeater_api_token"] = "configured" if config.repeater_api_token else ""
@@ -99,6 +105,7 @@ def main() -> int:
     except Exception as exc:
         LOGGER.error("invalid plugin config: %s", exc)
         return 2
+    _apply_log_level(config)
 
     if args.check_config:
         print(json.dumps(_redacted_config(config), indent=2))
@@ -188,6 +195,7 @@ def main() -> int:
                     http_server = None
                     http_server = _start_server(latest, state)
                 config = latest
+                _apply_log_level(config)
 
                 manager.collect_once(config)
                 if http_server is not None:

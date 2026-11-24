@@ -2,7 +2,7 @@
   "schema": 1,
   "id": "openhop.prometheus",
   "name": "Prometheus",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Prometheus metrics exporter and monitoring dashboard for openHop Repeater /api/stats.",
   "runtime": {
     "type": "python",
@@ -26,6 +26,7 @@
       "repeater_stats_path": "/api/stats",
       "repeater_api_token": "",
       "repeater_verify_tls": true,
+      "log_level": "",
       "test_endpoint_request_id": "",
       "test_repeater_request_id": "",
       "refresh_request_id": ""

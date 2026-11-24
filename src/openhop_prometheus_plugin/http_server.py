@@ -48,7 +48,7 @@ class MetricsHTTPServer:
         outer = self
 
         class Handler(BaseHTTPRequestHandler):
-            server_version = "openHopPrometheus/1.0.0"
+            server_version = "openHopPrometheus/1.1.0"
 
             def log_message(self, format, *args):  # noqa: A003
                 return

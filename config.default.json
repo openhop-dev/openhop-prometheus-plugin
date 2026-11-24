@@ -11,6 +11,7 @@
   "repeater_stats_path": "/api/stats",
   "repeater_api_token": "",
   "repeater_verify_tls": true,
+  "log_level": "",
   "test_endpoint_request_id": "",
   "test_repeater_request_id": "",
   "refresh_request_id": ""
