@@ -43,6 +43,12 @@ def version(tag):
     return tag[1:]
 
 
+def minimum_repeater_version(release_version):
+    release = tuple(map(int, version("v" + release_version).split(".")))
+    # v1.1.0 introduced the authenticated runtime API bridge; v1.0.x did not use it.
+    return "1.1.2" if release >= (1, 1, 0) else "0.3.0"
+
+
 def check_versions(tag, root):
     v = version(tag)
     project = tomllib.loads((root / "pyproject.toml").read_text())["project"]
@@ -68,7 +74,7 @@ def release_state(release, tag):
     return "verify"
 
 
-def upsert(base, fields):
+def upsert(base, fields) -> dict:
     require(set(fields) == FIELDS, "only four release fields permitted")
     version("v" + fields["version"])
     require(SHA.fullmatch(fields["source_revision"]), "invalid source SHA")
@@ -88,7 +94,8 @@ def upsert(base, fields):
             "id": PLUGIN, "name": "Prometheus", "description": "Exports openHop Repeater telemetry as Prometheus metrics.",
             "repository": REPOSITORY, "distribution": "openhop-prometheus-plugin",
             "category": "integration", "logo": f"https://raw.githubusercontent.com/{REPOSITORY}/{fields['source_revision']}/ui/assets/prometheus-logo.svg",
-            "min_repeater_version": "0.3.0", "homepage": f"https://github.com/{REPOSITORY}",
+            "min_repeater_version": minimum_repeater_version(fields["version"]),
+            "homepage": f"https://github.com/{REPOSITORY}",
             "tags": ["prometheus", "metrics", "monitoring"], **fields,
         })
         return result
@@ -102,6 +109,10 @@ def upsert(base, fields):
         require(all(entry.get(k) == v for k, v in fields.items()),
                 "equal version metadata/bytes are immutable")
     entry.update(fields)
+    minimum = minimum_repeater_version(fields["version"])
+    approved = tuple(map(int, version("v" + entry.get("min_repeater_version", "0.0.0")).split(".")))
+    if approved < tuple(map(int, minimum.split("."))):
+        entry["min_repeater_version"] = minimum
     return result
 
 
@@ -292,6 +303,8 @@ def prepare(api, catalogue, tag, output, run_origin=True):
                                           "distribution": "openhop-prometheus-plugin"}
     fields = public_release(api, policy, tag, sha, template)
     candidate = upsert(base, fields)
+    minimum = next(p for p in candidate["plugins"] if p["id"] == PLUGIN)["min_repeater_version"]
+    compatibility_changed = bool(entries and entries[0].get("min_repeater_version") != minimum)
     branch = "automation/openhop-prometheus-" + tag
     remote = optional(api.call, f"/repos/{CATALOGUE}/git/ref/heads/{branch}")
     remote_sha = remote["object"]["sha"] if remote else ""
@@ -301,7 +314,8 @@ def prepare(api, catalogue, tag, output, run_origin=True):
     (output / "catalogue.json").write_text(json.dumps(candidate, indent=2) + "\n")
     receipt = dict(tag=tag, branch=branch, base_sha=main_sha, remote_sha=remote_sha,
                    fields=fields, origin_run_url=origin_url, changed=changed,
-                   initial=not entries,
+                   initial=not entries, min_repeater_version=minimum,
+                   compatibility_changed=compatibility_changed,
                    candidate_sha256=hashlib.sha256((output / "catalogue.json").read_bytes()).hexdigest())
     (output / "proposal.json").write_text(json.dumps(receipt, indent=2) + "\n")
     if os.environ.get("GITHUB_OUTPUT"):

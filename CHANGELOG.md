@@ -1,6 +1,6 @@
 # Changelog
 
-## [1.1.0] - Unreleased
+## [1.1.0] - 2026-11-24
 
 ### Added
 - A **Log level** selector under **Settings → Plugin runtime**, with DEBUG, INFO, WARNING, ERROR and CRITICAL levels and an option to inherit the environment setting.

@@ -12,7 +12,7 @@ def test_manifest_contract():
     manifest = json.loads((root / "openhop-plugin.json").read_text())
     assert manifest["schema"] == 1
     assert manifest["id"] == "openhop.prometheus"
-    assert manifest["version"] == "1.1.0"
+    assert manifest["version"] == __version__
     assert manifest["runtime"] == {"type": "python", "entrypoint": "openhop-prometheus"}
     assert manifest["ui"] == {"type": "application", "entry": "ui/index.html"}
     defaults = manifest["config"]["defaults"]

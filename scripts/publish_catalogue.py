@@ -44,18 +44,26 @@ def publish(api, push, receipt):
         require(existing["head"]["ref"] == branch and existing["head"]["repo"]["full_name"] == REPO
                 and existing["base"]["ref"] == "main" and existing["base"]["repo"]["full_name"] == REPO
                 and existing["state"] == "open", "unexpected PR target")
-    head = push(receipt)
     fields = receipt["fields"]
+    minimum = receipt["min_repeater_version"]
+    if receipt["initial"]:
+        review = "Initial registration requires human approval. "
+    elif receipt["compatibility_changed"]:
+        review = ("This proposal raises the minimum Repeater version and requires maintainer approval; "
+                  "it is not a certified release-only update. ")
+    else:
+        review = ("This proposal changes only four release fields and preserves compatibility "
+                  "and branding. ")
+    head = push(receipt)
     title = f"Approve Prometheus {fields['version']}"
     body = (f"## Prometheus release\n\n- Plugin: `openhop.prometheus`\n- Version: `{fields['version']}`\n"
             f"- Source and public release tag SHA: `{fields['source_revision']}`\n"
             f"- Wheel: {fields['wheel_url']}\n- SHA-256: `{fields['sha256']}`\n"
             f"- Originating release run: {receipt['origin_run_url']}\n"
-            "- Minimum Repeater version: `0.3.0` (initial proposal; preserved thereafter)\n\n"
+            f"- Minimum Repeater version: `{minimum}`\n\n"
             "Public wheel verified with the trusted catalogue Python service profile; "
             "source/tag, RECORD, manifest and catalogue validation/tests passed without a write token. "
-            "Initial registration requires human approval; subsequent proposals change only four "
-            "release fields and preserve compatibility and branding. "
+            f"{review}"
             "Catalogue-owned policy and required checks decide automatic merging. "
             "This producer neither certifies itself nor requests auto-merge.\n")
     if existing:

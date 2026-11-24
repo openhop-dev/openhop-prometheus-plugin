@@ -49,6 +49,38 @@ def test_initial_upsert_preserves_others_and_is_not_implicitly_certified():
     assert release.upsert(result, fields()) == result
 
 
+@pytest.mark.parametrize('release_version', ['1.1.0', '1.1.1', '2.0.0'])
+def test_runtime_snapshot_release_initial_minimum(release_version):
+    result = release.upsert(catalogue(), fields(release_version))
+    assert result['plugins'][1]['min_repeater_version'] == '1.1.2'
+
+
+@pytest.mark.parametrize('approved_floor,expected', [
+    ('0.3.0', '1.1.2'), ('1.1.2', '1.1.2'), ('1.2.0', '1.2.0'),
+])
+def test_runtime_snapshot_update_raises_but_never_lowers_minimum(approved_floor, expected):
+    original = release.upsert(catalogue(), fields())
+    original['plugins'][1]['min_repeater_version'] = approved_floor
+    preserved = copy.deepcopy(original)
+    updated = release.upsert(original, fields('1.1.0'))
+    old, new = original['plugins'][1], updated['plugins'][1]
+    assert new['min_repeater_version'] == expected
+    metadata = release.FIELDS | {'min_repeater_version'}
+    assert {k: v for k, v in old.items() if k not in metadata} == {
+        k: v for k, v in new.items() if k not in metadata}
+    assert updated['plugins'][0] == original['plugins'][0]
+    assert original == preserved
+
+
+def test_runtime_snapshot_update_derives_omitted_optional_minimum():
+    original = release.upsert(catalogue(), fields())
+    original['plugins'][1].pop('min_repeater_version')
+    preserved = copy.deepcopy(original)
+    updated = release.upsert(original, fields('1.1.0'))
+    assert updated['plugins'][1]['min_repeater_version'] == '1.1.2'
+    assert original == preserved
+
+
 def test_subsequent_update_only_four_fields_and_rejects_rollback_or_mutation():
     original = release.upsert(catalogue(), fields())
     updated = release.upsert(original, fields('1.0.1'))
@@ -65,6 +97,50 @@ def test_subsequent_update_only_four_fields_and_rejects_rollback_or_mutation():
     damaged['plugins'][1]['repository'] = 'attacker/repo'
     with pytest.raises(ValueError, match='identity'):
         release.upsert(damaged, fields('1.0.2'))
+
+
+@pytest.mark.parametrize('omit_minimum', [False, True])
+def test_prepare_reports_effective_minimum_and_compatibility_change(tmp_path, monkeypatch, omit_minimum):
+    base = release.upsert(catalogue(), fields())
+    if omit_minimum:
+        base['plugins'][1].pop('min_repeater_version')
+    destination = tmp_path / 'catalogue'
+    destination.mkdir()
+    (destination / 'catalogue.json').write_text(json.dumps(base))
+    base_sha = 'd' * 40
+
+    class Policy:
+        strict_json = staticmethod(json.loads)
+
+    class API:
+        def call(self, path):
+            if path == f'/repos/{release.CATALOGUE}/git/ref/heads/main':
+                return {'object': {'sha': base_sha}}
+            if path.endswith('/git/ref/heads/automation/openhop-prometheus-v1.1.0'):
+                raise release.APIError(404)
+            raise AssertionError(path)
+
+    def git(root, *args):
+        assert root == destination
+        if args == ('rev-parse', 'HEAD'):
+            return base_sha
+        assert args == ('status', '--porcelain', '--untracked-files=no')
+        return ''
+
+    monkeypatch.setattr(release, 'load_policy', lambda path: Policy())
+    monkeypatch.setattr(release, 'git', git)
+    monkeypatch.setattr(release, 'trusted_source', lambda *args: SHA)
+    monkeypatch.setattr(release, 'public_release', lambda *args: fields('1.1.0'))
+    output = tmp_path / 'proposal'
+    receipt = release.prepare(API(), destination, 'v1.1.0', output, run_origin=False)
+    candidate = json.loads((output / 'catalogue.json').read_text())
+    effective = candidate['plugins'][1]['min_repeater_version']
+    assert effective == '1.1.2'
+    assert receipt.get('min_repeater_version') == effective
+    assert receipt.get('compatibility_changed') is True
+    assert receipt['initial'] is False and receipt['changed'] is True
+    assert receipt['fields'] == fields('1.1.0')
+    assert json.loads((destination / 'catalogue.json').read_text()) == base
 
 
 def test_duplicate_and_invalid_fields_rejected():
@@ -180,6 +256,7 @@ def test_public_bytes_only_and_missing_registration_fail_closed(monkeypatch):
 def test_publisher_initial_is_draft_and_retry_preserves_review_state():
     receipt = {'changed': True, 'initial': True, 'branch': 'automation/openhop-prometheus-v1.0.0',
                'base_sha': SHA, 'remote_sha': '', 'fields': fields(),
+               'min_repeater_version': '0.3.0', 'compatibility_changed': False,
                'origin_run_url': f'https://github.com/{release.REPOSITORY}/actions/runs/1'}
     requests = []
     state = {'number': 7, 'head': {'sha': 'c' * 40, 'ref': receipt['branch'],
@@ -228,7 +305,9 @@ def test_publisher_initial_is_draft_and_retry_preserves_review_state():
 
 def test_publisher_rejects_wrong_head_repository():
     receipt = {'changed': True, 'initial': True, 'branch': 'automation/openhop-prometheus-v1.0.0',
-               'base_sha': SHA, 'remote_sha': '', 'fields': fields(), 'origin_run_url': 'https://example.test'}
+               'base_sha': SHA, 'remote_sha': '', 'fields': fields(),
+               'min_repeater_version': '0.3.0', 'compatibility_changed': False,
+               'origin_run_url': 'https://example.test'}
     bad = {'number': 7, 'head': {'ref': receipt['branch'], 'repo': {'full_name': 'yellowcooln/openhop-plugin-catalogue'}},
            'base': {'ref': 'main', 'repo': {'full_name': publisher.REPO}}, 'state': 'open'}
     def api(path, method='GET', data=None):
@@ -239,3 +318,36 @@ def test_publisher_rejects_wrong_head_repository():
         raise AssertionError('unexpected call or push')
     with pytest.raises(ValueError, match='unexpected PR target'):
         publisher.publish(api, lambda r: pytest.fail('must not push'), receipt)
+
+
+def test_publisher_describes_effective_minimum_and_metadata_review():
+    receipt = {'changed': True, 'initial': False, 'branch': 'automation/openhop-prometheus-v1.1.0',
+               'base_sha': SHA, 'remote_sha': '', 'fields': fields('1.1.0'),
+               'min_repeater_version': '1.1.2', 'compatibility_changed': True,
+               'origin_run_url': f'https://github.com/{release.REPOSITORY}/actions/runs/1'}
+    requests = []
+    state = {'number': 7, 'head': {'sha': 'c' * 40, 'ref': receipt['branch'],
+             'repo': {'full_name': publisher.REPO}},
+             'base': {'ref': 'main', 'repo': {'full_name': publisher.REPO}},
+             'state': 'open', 'draft': False}
+
+    def api(path, method='GET', data=None):
+        requests.append((path, method, data))
+        if path.endswith('/git/ref/heads/main'):
+            return {'object': {'sha': SHA}}
+        if '/pulls?state=open' in path:
+            return []
+        if method == 'POST':
+            assert path == publisher.BASE + '/pulls'
+            assert data is not None
+            state.update({k: v for k, v in data.items() if k not in ('head', 'base')})
+            return {'number': 7}
+        return state
+
+    publisher.publish(api, lambda r: 'c' * 40, receipt)
+    posted = next(data for _, method, data in requests if method == 'POST')
+    assert 'Minimum Repeater version: `1.1.2`' in posted['body']
+    assert 'requires maintainer approval' in posted['body']
+    assert 'subsequent proposals change only four' not in posted['body']
+    assert posted['draft'] is False
+    assert not any(method == 'PUT' for _, method, _ in requests)
